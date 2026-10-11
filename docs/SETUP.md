@@ -1,13 +1,13 @@
 # Setup Guide
 
-Database runs in the cloud (Railway). Backend and frontend run locally until the deploy story (SCRUM-29).
+Database runs in the cloud (Railway). Backend and frontend run locally until the deploy story (XENO-25).
 
 ## Who does what
 
 | Step | Owner |
 |---|---|
 | Create the Railway project + PostgreSQL, share `DATABASE_URL` privately | Manager |
-| Create the Shopify dev store + custom app, share the access token privately | Manager (SCRUM-6) |
+| Create the Shopify dev store + custom app, share the access token privately | Manager (XENO-8) |
 | Clone the repo, create `.env`, run backend + frontend locally | Developer |
 
 Secrets (`DATABASE_URL`, Shopify tokens, `JWT_SECRET`) are shared over DM or a password manager. **Never** in GitHub, Jira or Slack channels.
@@ -33,11 +33,11 @@ Secrets (`DATABASE_URL`, Shopify tokens, `JWT_SECRET`) are shared over DM or a p
 ## 2. Clone and configure (developer)
 
 ```bash
-git clone https://github.com/<owner>/xeno-collab.git
+git clone https://github.com/savyagupta-2004/xeno-collab.git
 cd xeno-collab
 ```
 
-Create `backend/.env` by copying `backend/.env.example` (added in SCRUM-7):
+Create `backend/.env` by copying `backend/.env.example` (added in XENO-2):
 
 ```
 PORT=5000
@@ -71,7 +71,7 @@ npm install
 npm run dev                # http://localhost:3000
 ```
 
-## 5. Shopify webhooks locally (from SCRUM-19)
+## 5. Shopify webhooks locally (from XENO-15)
 
 Shopify can't reach `localhost`, so expose the backend:
 
@@ -85,9 +85,9 @@ Use the `https://….ngrok-free.app/api/webhooks/shopify` URL as the webhook add
 
 1. Pick a story from the active sprint in Jira and move it to **In Progress**.
 2. `git checkout main && git pull`
-3. `git checkout -b feature/SCRUM-<id>-short-name`
-4. Commit with the key: `git commit -m "SCRUM-<id>: what changed"`
-5. Push and open a PR into `main` titled `SCRUM-<id>: …` (the template fills in the checklist).
+3. `git checkout -b feature/XENO-<id>-short-name`
+4. Commit with the key: `git commit -m "XENO-<id>: what changed"`
+5. Push and open a PR into `main` titled `XENO-<id>: …` (the template fills in the checklist).
 6. The manager reviews, requests changes or merges. Jira moves the story to Done when GitHub for Jira is connected.
 
 ## Rules for the shared database

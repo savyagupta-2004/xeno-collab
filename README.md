@@ -11,10 +11,11 @@
 - **Deploy:** Vercel (frontend), Render (backend), Railway (Postgres)
 
 ## Getting started
-See [docs/SETUP.md](docs/SETUP.md) for database (Railway) and local server setup.
+- **New here? Start with [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md)** (branches, commits, PRs)
+- [docs/SETUP.md](docs/SETUP.md) for database (Railway) and local server setup
 
 ## Workflow
-1. Every change maps to a Jira story (e.g. `SCRUM-12`).
-2. Branch: `feature/SCRUM-12-short-description`
-3. Commit/PR title starts with the key: `SCRUM-12: add customers ingestion`
+1. Every change maps to a Jira story (e.g. `XENO-12`).
+2. Branch: `feature/XENO-12-short-description`
+3. Commit/PR title starts with the key: `XENO-12: add customers ingestion`
 4. PR into `main` → reviewed & merged by the project manager.
