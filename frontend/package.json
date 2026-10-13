@@ -1,0 +1,33 @@
+{
+  "name": "xeno-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Xeno Insights dashboard (Next.js App Router)",
+  "engines": {
+    "node": ">=18.18"
+  },
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "next": "^15.5.27",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "recharts": "^3.10.1"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.7",
+    "@tailwindcss/postcss": "^4.3.3",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^15.5.27",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.10",
+    "tailwindcss": "^4.3.3"
+  }
+}
