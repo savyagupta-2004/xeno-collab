@@ -131,18 +131,10 @@ Then on GitHub:
 
 ### CI checks (automatic)
 
-When you open or update a PR, GitHub runs our pipeline. You'll see it at the bottom of the PR:
+When you open or update a PR, GitHub runs one check called **Build & Test**. It installs everything, then checks formatting, lint, tests, security audit, that the server starts, and (later) the frontend build.
 
-| Check | What it means |
-|---|---|
-| **Backend (Node 22 / 24)** | Formatting, lint, tests, dependency audit, and the server actually starts |
-| **Frontend** | Lint and production build (once the frontend exists) |
-| **Security scan (CodeQL)** | Looks for security bugs in the code |
-| **Dependency review** | Blocks new packages that have known serious vulnerabilities |
-| **CI passed** | ✅ only if everything above passed |
-
-- ✅ **All green:** Savya can review.
-- ❌ **Red:** click **Details** next to the failed check, read the error, fix it on your branch and push again. The checks re-run on their own.
+- ✅ **Green:** Savya can review.
+- ❌ **Red:** click **Details**, find the step with the ❌, fix it on your branch and push again. It re-runs on its own.
 - A red PR is **not reviewed or merged**, so fix it first.
 
 ---

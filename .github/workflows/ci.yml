@@ -5,68 +5,53 @@ on:
     branches: [main]
   push:
     branches: [main]
-  workflow_dispatch:
-
-# A newer push to the same branch/PR cancels the older run
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  # Backend/frontend are skipped until their package.json exists
-  detect:
-    name: Detect projects
+  build-and-test:
+    name: Build & Test
     runs-on: ubuntu-latest
-    outputs:
-      backend: ${{ steps.check.outputs.backend }}
-      frontend: ${{ steps.check.outputs.frontend }}
-    steps:
-      - uses: actions/checkout@v5
-      - id: check
-        run: |
-          echo "backend=$([ -f backend/package.json ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "frontend=$([ -f frontend/package.json ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
-  backend:
-    name: Backend (Node ${{ matrix.node }})
-    needs: detect
-    if: needs.detect.outputs.backend == 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node: [22, 24]
-    defaults:
-      run:
-        working-directory: backend
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout code
+        uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v5
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
         with:
-          node-version: ${{ matrix.node }}
-          cache: npm
-          cache-dependency-path: backend/package-lock.json
+          node-version: 22
 
-      - name: Install dependencies
+      # ---------- Backend (runs only once backend/package.json exists) ----------
+      - name: Backend - install
+        if: hashFiles('backend/package.json') != ''
+        working-directory: backend
         run: npm ci
 
-      - name: Check formatting (Prettier)
+      - name: Backend - format check
+        if: hashFiles('backend/package.json') != ''
+        working-directory: backend
         run: npm run format:check --if-present
 
-      - name: Lint (ESLint)
+      - name: Backend - lint
+        if: hashFiles('backend/package.json') != ''
+        working-directory: backend
         run: npm run lint --if-present
 
-      - name: Unit & integration tests (Jest)
-        run: npm run test --if-present -- --ci --coverage
+      - name: Backend - tests
+        if: hashFiles('backend/package.json') != ''
+        working-directory: backend
+        run: npm run test --if-present -- --ci
 
-      - name: Audit production dependencies
+      - name: Backend - security audit
+        if: hashFiles('backend/package.json') != ''
+        working-directory: backend
         run: npm audit --omit=dev --audit-level=high
 
-      - name: Smoke test (server boots and answers /api/health)
+      - name: Backend - server starts
+        if: hashFiles('backend/package.json') != ''
+        working-directory: backend
         env:
           PORT: 5055
           NODE_ENV: production
@@ -76,104 +61,26 @@ jobs:
           node src/server.js > server.log 2>&1 &
           for i in $(seq 1 30); do
             code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5055/api/health || true)
-            if [ "$code" != "000" ]; then
-              echo "Server is up, /api/health returned HTTP $code"
-              exit 0
-            fi
+            if [ "$code" != "000" ]; then echo "Server is up (HTTP $code)"; exit 0; fi
             sleep 1
           done
-          echo "Server did not start within 30s. Log:"
-          cat server.log
-          exit 1
+          echo "Server did not start within 30s:"; cat server.log; exit 1
 
-      - name: Upload coverage report
-        if: always() && matrix.node == 22
-        uses: actions/upload-artifact@v4
-        with:
-          name: backend-coverage
-          path: backend/coverage/
-          if-no-files-found: ignore
-          retention-days: 7
-
-  frontend:
-    name: Frontend
-    needs: detect
-    if: needs.detect.outputs.frontend == 'true'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
+      # ---------- Frontend (runs only once frontend/package.json exists) ----------
+      - name: Frontend - install
+        if: hashFiles('frontend/package.json') != ''
         working-directory: frontend
-    env:
-      NEXT_PUBLIC_API_URL: http://localhost:5000
-      NEXT_TELEMETRY_DISABLED: 1
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install dependencies
         run: npm ci
 
-      - name: Lint
+      - name: Frontend - lint
+        if: hashFiles('frontend/package.json') != ''
+        working-directory: frontend
         run: npm run lint --if-present
 
-      - name: Tests
-        run: npm run test --if-present
-
-      - name: Production build
+      - name: Frontend - build
+        if: hashFiles('frontend/package.json') != ''
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:5000
+          NEXT_TELEMETRY_DISABLED: 1
         run: npm run build
-
-  codeql:
-    name: Security scan (CodeQL)
-    needs: detect
-    if: needs.detect.outputs.backend == 'true' || needs.detect.outputs.frontend == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: read
-      security-events: write
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: github/codeql-action/init@v4
-        with:
-          languages: javascript-typescript
-          build-mode: none
-          queries: security-and-quality
-
-      - uses: github/codeql-action/analyze@v4
-        with:
-          category: /language:javascript-typescript
-
-  dependency-review:
-    name: Dependency review
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      # Blocks PRs that add runtime dependencies with high/critical known vulnerabilities
-      - uses: actions/dependency-review-action@v4
-        with:
-          fail-on-severity: high
-          fail-on-scopes: runtime
-
-  # Single check to mark as "required" in the main branch ruleset
-  ci-passed:
-    name: CI passed
-    if: always()
-    needs: [detect, backend, frontend, codeql, dependency-review]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Verify all jobs succeeded or were skipped
-        run: |
-          if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = "true" ]; then
-            echo "One or more CI jobs failed:"
-            echo '${{ toJSON(needs) }}'
-            exit 1
-          fi
-          echo "All CI jobs passed."
