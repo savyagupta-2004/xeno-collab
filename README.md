@@ -11,6 +11,7 @@
 - **Deploy:** Vercel (frontend), Render (backend), Railway (Postgres)
 
 ## Getting started
+- **Project brief & Definition of Done:** Jira Epic [XENO-1](https://xeno-analytics.atlassian.net/browse/XENO-1)
 - **New here? Start with [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md)** (branches, commits, PRs)
 - [docs/SETUP.md](docs/SETUP.md) for database (Railway) and local server setup
 

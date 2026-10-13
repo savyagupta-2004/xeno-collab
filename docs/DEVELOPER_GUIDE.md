@@ -15,7 +15,15 @@ Jira story  →  your branch  →  commits  →  Pull Request  →  Savya review
 - You never push to `main` directly. Everything goes through a **Pull Request (PR)**.
 - **Savya** (`savyagupta-2004`) reviews and merges every PR.
 
-Jira board: https://xeno-analytics.atlassian.net/jira/software/projects/XENO/boards/2
+## Read these first (day 1)
+
+1. **The project brief:** the Epic **[XENO-1](https://xeno-analytics.atlassian.net/browse/XENO-1)**. It explains what we're building, the scope, the release date (3 Nov) and the **Definition of Done** that every story must meet.
+2. **The board:** https://xeno-analytics.atlassian.net/jira/software/projects/XENO/boards/2 (your stories for this sprint).
+3. **The roadmap:** the **Timeline** tab in Jira shows the Epic and all stories across the 3 sprints.
+4. **[SETUP.md](SETUP.md):** get the project running on your machine.
+
+### What we're building, in one paragraph
+A web app where a Shopify store owner signs up, connects their store, and sees a dashboard of their business (customers, orders, revenue, top customers, trends). Behind it, our backend pulls data from Shopify (and receives live updates via webhooks), saves it in PostgreSQL, and keeps every store's data separate (multi-tenant). Stack: Express + Prisma + PostgreSQL (Railway) on the backend, Next.js on the frontend.
 
 ---
 
@@ -82,6 +90,21 @@ The `.gitignore` already blocks these, but double-check `git status` before comm
 
 ---
 
+## Before you push: run the checks locally
+
+The same checks run automatically on every PR (see "CI checks" below). Run them first so you don't get a red PR:
+
+```bash
+cd backend
+npm run format      # auto-fixes formatting
+npm run lint        # must show no errors
+npm test            # all tests must pass
+```
+
+Adding a new feature? **Add tests for it** in `backend/tests/`. A PR without tests for new logic will be sent back.
+
+---
+
 ## Step 4: Push and open a Pull Request
 
 ```bash
@@ -103,6 +126,24 @@ Then on GitHub:
 6. **Assignees** → assign yourself.
 7. Click **Create pull request**.
 8. In Jira, move the story to **In Review**.
+
+---
+
+### CI checks (automatic)
+
+When you open or update a PR, GitHub runs our pipeline. You'll see it at the bottom of the PR:
+
+| Check | What it means |
+|---|---|
+| **Backend (Node 22 / 24)** | Formatting, lint, tests, dependency audit, and the server actually starts |
+| **Frontend** | Lint and production build (once the frontend exists) |
+| **Security scan (CodeQL)** | Looks for security bugs in the code |
+| **Dependency review** | Blocks new packages that have known serious vulnerabilities |
+| **CI passed** | ✅ only if everything above passed |
+
+- ✅ **All green:** Savya can review.
+- ❌ **Red:** click **Details** next to the failed check, read the error, fix it on your branch and push again. The checks re-run on their own.
+- A red PR is **not reviewed or merged**, so fix it first.
 
 ---
 
@@ -146,10 +187,11 @@ Fix any conflicts, then commit and push. Stuck on a conflict? Ask before force-p
 1. **Story key everywhere:** branch, commits and PR title all have `XENO-<number>`.
 2. **Never push to `main`.** Always use a branch and a PR.
 3. **One story = one branch = one PR.**
-4. **Keep Jira updated:** To Do → In Progress → In Review → (Savya) Done.
-5. **No secrets in code.** `.env` stays on your machine; use `.env.example` for variable names.
-6. **Database changes only through Prisma migrations** included in your PR.
-7. **Stuck for more than ~1 hour? Ask.** Comment on the Jira story or message Savya. Asking early is a good thing, not a weakness.
+4. **Green CI before review.** Never ask for a review on a red PR.
+5. **Keep Jira updated:** To Do → In Progress → In Review → (Savya) Done.
+6. **No secrets in code.** `.env` stays on your machine; use `.env.example` for variable names.
+7. **Database changes only through Prisma migrations** included in your PR.
+8. **Stuck for more than ~1 hour? Ask.** Comment on the Jira story or message Savya. Asking early is a good thing, not a weakness.
 
 ---
 
