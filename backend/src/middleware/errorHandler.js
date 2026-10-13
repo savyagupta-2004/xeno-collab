@@ -14,7 +14,7 @@ const errorHandler = (err, req, res, _next) => {
 
   // Never leak internal error details to clients
   const message = isServerError ? 'Internal server error' : err.message;
-  const code = err.code || (isServerError ? 'INTERNAL_ERROR' : 'REQUEST_ERROR');
+  const code = isServerError ? 'INTERNAL_ERROR' : err.code || 'REQUEST_ERROR';
 
   return res.status(statusCode).json({ error: { message, code } });
 };
