@@ -1,5 +1,13 @@
 const request = require('supertest');
 const express = require('express');
+
+// No real database in tests: the health check's DB probe is mocked per test.
+jest.mock('../../src/config/prisma', () => ({
+  prisma: {},
+  checkDatabaseConnection: jest.fn(),
+}));
+
+const { checkDatabaseConnection } = require('../../src/config/prisma');
 const createApp = require('../../src/app');
 const errorHandler = require('../../src/middleware/errorHandler');
 const AppError = require('../../src/utils/AppError');
@@ -7,12 +15,25 @@ const AppError = require('../../src/utils/AppError');
 describe('App skeleton', () => {
   const app = createApp({ nodeEnv: 'test' });
 
-  it('GET /api/health returns 200 with status and timestamp', async () => {
+  it('GET /api/health returns 200 with status, db up and timestamp when the DB is reachable', async () => {
+    checkDatabaseConnection.mockResolvedValueOnce(true);
+
     const res = await request(app).get('/api/health');
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('ok');
+    expect(res.body.db).toBe('up');
     expect(Number.isNaN(Date.parse(res.body.timestamp))).toBe(false);
+  });
+
+  it('GET /api/health returns 503 with db down when the DB is unreachable', async () => {
+    checkDatabaseConnection.mockResolvedValueOnce(false);
+
+    const res = await request(app).get('/api/health');
+
+    expect(res.status).toBe(503);
+    expect(res.body.status).toBe('degraded');
+    expect(res.body.db).toBe('down');
   });
 
   it('unknown routes return 404 JSON', async () => {
