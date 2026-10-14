@@ -20,10 +20,17 @@ Every error response has this shape:
 
 ### `GET /api/health`
 
-Public. Liveness check.
+Public. Reports whether the API is running and whether it can reach the database
+(`SELECT 1`, 3 second timeout).
 
-**200**
+**200**: API and database are up
 
 ```json
-{ "status": "ok", "timestamp": "2026-10-13T12:00:00.000Z" }
+{ "status": "ok", "db": "up", "timestamp": "2026-10-13T12:00:00.000Z" }
+```
+
+**503**: API is running but the database is unreachable
+
+```json
+{ "status": "degraded", "db": "down", "timestamp": "2026-10-13T12:00:00.000Z" }
 ```

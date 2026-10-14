@@ -1,4 +1,5 @@
 const config = require('./config/env');
+const { prisma } = require('./config/prisma');
 const createApp = require('./app');
 
 const app = createApp({ frontendUrl: config.frontendUrl, nodeEnv: config.nodeEnv });
@@ -9,7 +10,10 @@ const server = app.listen(config.port, () => {
 
 const shutdown = (signal) => {
   console.log(`[server] ${signal} received, shutting down`);
-  server.close(() => process.exit(0));
+  server.close(async () => {
+    await prisma.$disconnect();
+    process.exit(0);
+  });
 };
 
 process.on('SIGINT', () => shutdown('SIGINT'));
