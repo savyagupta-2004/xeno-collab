@@ -1,8 +1,14 @@
 // Single API client for the whole frontend.
-// Every call goes to `${NEXT_PUBLIC_API_URL}/api/...` and carries the JWT if one is stored.
+// Every call goes to `${API_BASE_URL}/api/...` and carries the JWT if one is stored.
 
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000').replace(/\/+$/, '');
-const TOKEN_KEY = 'xeno_token';
+import {
+  API_BASE_URL,
+  API_PREFIX,
+  AUTH_ROUTES,
+  ROUTES,
+  SESSION_EXPIRED_QUERY,
+  TOKEN_STORAGE_KEY,
+} from '@/lib/constants';
 
 export class ApiError extends Error {
   constructor(message, status, code) {
@@ -13,28 +19,41 @@ export class ApiError extends Error {
   }
 }
 
+const isBrowser = () => typeof window !== 'undefined';
+
 // localStorage only exists in the browser, so guard every access for server rendering.
 export const tokenStore = {
   get() {
-    if (typeof window === 'undefined') return null;
-    return window.localStorage.getItem(TOKEN_KEY);
+    return isBrowser() ? window.localStorage.getItem(TOKEN_STORAGE_KEY) : null;
   },
   set(token) {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(TOKEN_KEY, token);
+    if (isBrowser()) window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
   },
   clear() {
-    if (typeof window === 'undefined') return;
-    window.localStorage.removeItem(TOKEN_KEY);
+    if (isBrowser()) window.localStorage.removeItem(TOKEN_STORAGE_KEY);
   },
 };
+
+let isRedirecting = false;
+
+// Called on any 401: drop the token and send the user back to login.
+function handleUnauthorized(hadToken) {
+  tokenStore.clear();
+
+  // On login/register a 401 means wrong credentials; let the form show the error instead.
+  if (!isBrowser() || isRedirecting || AUTH_ROUTES.includes(window.location.pathname)) return;
+
+  isRedirecting = true;
+  const { key, value } = SESSION_EXPIRED_QUERY;
+  window.location.replace(hadToken ? `${ROUTES.login}?${key}=${value}` : ROUTES.login);
+}
 
 async function request(path, { method = 'GET', body, headers, ...options } = {}) {
   const token = tokenStore.get();
 
   let res;
   try {
-    res = await fetch(`${API_URL}/api${path}`, {
+    res = await fetch(`${API_BASE_URL}${API_PREFIX}${path}`, {
       method,
       headers: {
         ...(body !== undefined && { 'Content-Type': 'application/json' }),
@@ -51,8 +70,7 @@ async function request(path, { method = 'GET', body, headers, ...options } = {})
   const data = res.status === 204 ? null : await res.json().catch(() => null);
 
   if (!res.ok) {
-    // Token expired or invalid: drop it so the user is asked to log in again.
-    if (res.status === 401) tokenStore.clear();
+    if (res.status === 401) handleUnauthorized(Boolean(token));
 
     // Backend errors look like { error: { message, code } }
     throw new ApiError(

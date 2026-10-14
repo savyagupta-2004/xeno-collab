@@ -1,9 +1,8 @@
 import PagePlaceholder from '@/components/ui/PagePlaceholder';
+import { PAGE_TITLES } from '@/lib/constants';
 
-export const metadata = { title: 'Products · Xeno Insights' };
+export const metadata = { title: PAGE_TITLES.products };
 
 export default function ProductsPage() {
-  return (
-    <PagePlaceholder title="Products" description="Products synced from your Shopify store." />
-  );
+  return <PagePlaceholder title={PAGE_TITLES.products} />;
 }

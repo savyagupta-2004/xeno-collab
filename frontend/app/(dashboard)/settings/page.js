@@ -1,12 +1,8 @@
 import PagePlaceholder from '@/components/ui/PagePlaceholder';
+import { PAGE_TITLES } from '@/lib/constants';
 
-export const metadata = { title: 'Settings · Xeno Insights' };
+export const metadata = { title: PAGE_TITLES.settings };
 
 export default function SettingsPage() {
-  return (
-    <PagePlaceholder
-      title="Settings"
-      description="Connect your Shopify store and manage your account."
-    />
-  );
+  return <PagePlaceholder title={PAGE_TITLES.settings} />;
 }

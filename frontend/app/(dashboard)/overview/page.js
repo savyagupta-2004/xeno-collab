@@ -1,12 +1,8 @@
 import PagePlaceholder from '@/components/ui/PagePlaceholder';
+import { PAGE_TITLES } from '@/lib/constants';
 
-export const metadata = { title: 'Overview · Xeno Insights' };
+export const metadata = { title: PAGE_TITLES.overview };
 
 export default function OverviewPage() {
-  return (
-    <PagePlaceholder
-      title="Overview"
-      description="Totals, orders by date, top customers and trends."
-    />
-  );
+  return <PagePlaceholder title={PAGE_TITLES.overview} />;
 }

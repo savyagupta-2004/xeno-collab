@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { API_ENDPOINTS } from '@/lib/constants';
 
 // Small indicator that the frontend can reach the backend via the shared API client.
 export default function ApiStatus() {
@@ -10,7 +11,7 @@ export default function ApiStatus() {
   useEffect(() => {
     let cancelled = false;
     api
-      .get('/health')
+      .get(API_ENDPOINTS.health)
       .then(() => !cancelled && setStatus('online'))
       .catch(() => !cancelled && setStatus('offline'));
     return () => {

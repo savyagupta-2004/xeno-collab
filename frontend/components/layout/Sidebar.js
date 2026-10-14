@@ -3,21 +3,14 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import ApiStatus from '@/components/ui/ApiStatus';
-
-const NAV_ITEMS = [
-  { href: '/overview', label: 'Overview' },
-  { href: '/customers', label: 'Customers' },
-  { href: '/orders', label: 'Orders' },
-  { href: '/products', label: 'Products' },
-  { href: '/settings', label: 'Settings' },
-];
+import { APP_NAME, NAV_ITEMS } from '@/lib/constants';
 
 export default function Sidebar() {
   const pathname = usePathname();
 
   return (
     <aside className="flex flex-col border-b border-slate-200 bg-white md:w-60 md:border-b-0 md:border-r">
-      <div className="px-6 py-5 text-lg font-semibold text-brand-600">Xeno Insights</div>
+      <div className="px-6 py-5 text-lg font-semibold text-brand-600">{APP_NAME}</div>
 
       <nav className="flex gap-1 overflow-x-auto px-3 pb-3 md:flex-1 md:flex-col md:pb-0">
         {NAV_ITEMS.map(({ href, label }) => {
