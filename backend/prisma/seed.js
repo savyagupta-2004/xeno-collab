@@ -8,13 +8,12 @@ const prisma = new PrismaClient();
 const DEMO_TENANT = {
   name: 'Demo Store',
   shopDomain: 'xeno-demo.myshopify.com',
-  currency: 'INR',
 };
 
 async function main() {
   const tenant = await prisma.tenant.upsert({
     where: { shopDomain: DEMO_TENANT.shopDomain },
-    update: { name: DEMO_TENANT.name, currency: DEMO_TENANT.currency },
+    update: { name: DEMO_TENANT.name },
     create: DEMO_TENANT,
   });
 

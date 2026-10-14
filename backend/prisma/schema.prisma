@@ -4,7 +4,7 @@
 // - Tables and columns are snake_case in SQL (orders.total_price), camelCase in JS (order.totalPrice).
 // - Every Shopify-derived table has tenant_id (FK to tenants, indexed) so each store's data is isolated.
 // - Shopify IDs are stored as text: they are identifiers, not numbers we do maths on.
-// - Money is DECIMAL(12,2). Timestamps are TIMESTAMPTZ.
+// - Money is DECIMAL(12,2) and always INR (single-currency platform). Timestamps are TIMESTAMPTZ.
 // - On Shopify-derived tables, created_at / updated_at hold Shopify's own values;
 //   synced_at is when we last wrote the row.
 
@@ -28,7 +28,6 @@ model Tenant {
   /// e.g. "my-store.myshopify.com". Null until the store is connected.
   shopDomain         String?   @unique @map("shop_domain")
   shopifyAccessToken String?   @map("shopify_access_token")
-  currency           String?   @db.VarChar(3)
   isActive           Boolean   @default(true) @map("is_active")
   lastSyncedAt       DateTime? @map("last_synced_at") @db.Timestamptz(3)
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -75,7 +74,6 @@ model Customer {
   phone             String?
   ordersCount       Int      @default(0) @map("orders_count")
   totalSpent        Decimal  @default(0) @map("total_spent") @db.Decimal(12, 2)
-  currency          String?  @db.VarChar(3)
   createdAt         DateTime @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime @map("updated_at") @db.Timestamptz(3)
   syncedAt          DateTime @default(now()) @updatedAt @map("synced_at") @db.Timestamptz(3)
@@ -120,7 +118,6 @@ model Order {
   /// Null for guest checkouts
   customerId        Int?      @map("customer_id")
   email             String?
-  currency          String?   @db.VarChar(3)
   subtotalPrice     Decimal   @default(0) @map("subtotal_price") @db.Decimal(12, 2)
   totalDiscounts    Decimal   @default(0) @map("total_discounts") @db.Decimal(12, 2)
   totalTax          Decimal   @default(0) @map("total_tax") @db.Decimal(12, 2)
@@ -185,7 +182,6 @@ model Event {
   email             String?
   /// Cart value at the time of the event
   totalPrice        Decimal?  @map("total_price") @db.Decimal(12, 2)
-  currency          String?   @db.VarChar(3)
   /// Raw Shopify payload, kept for debugging and future metrics
   payload           Json?
   occurredAt        DateTime  @map("occurred_at") @db.Timestamptz(3)
