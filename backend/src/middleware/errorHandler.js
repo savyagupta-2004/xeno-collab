@@ -16,7 +16,10 @@ const errorHandler = (err, req, res, _next) => {
   const message = isServerError ? 'Internal server error' : err.message;
   const code = isServerError ? 'INTERNAL_ERROR' : err.code || 'REQUEST_ERROR';
 
-  return res.status(statusCode).json({ error: { message, code } });
+  // Per-field validation messages, only for client errors
+  const fields = !isServerError && err.fields ? err.fields : undefined;
+
+  return res.status(statusCode).json({ error: { message, code, ...(fields && { fields }) } });
 };
 
 module.exports = errorHandler;
