@@ -10,7 +10,8 @@ Protected endpoints need the JWT from register/login in the `Authorization` head
 Authorization: Bearer <token>
 ```
 
-The token is valid for 24 hours and carries `userId` and `tenantId`.
+The token is valid for 24 hours and carries `userId` and `tenantId`. If the store is deactivated,
+existing tokens are rejected immediately with `403 TENANT_INACTIVE`.
 
 ## Error format
 
@@ -19,6 +20,17 @@ Every error response has this shape:
 ```json
 { "error": { "message": "Human readable message", "code": "MACHINE_CODE" } }
 ```
+
+| Status | Code                  | When                                                         |
+| ------ | --------------------- | ------------------------------------------------------------ |
+| 400    | `INVALID_JSON`        | Request body is not valid JSON                               |
+| 400    | `VALIDATION_ERROR`    | Request body fails validation (see `fields` below)           |
+| 401    | `UNAUTHORIZED`        | Missing, invalid or expired token                            |
+| 401    | `INVALID_CREDENTIALS` | Wrong email or password (same message for both)              |
+| 403    | `TENANT_INACTIVE`     | The store has been deactivated                               |
+| 404    | `NOT_FOUND`           | Route does not exist                                         |
+| 409    | `EMAIL_TAKEN`         | An account with this email already exists                    |
+| 500    | `INTERNAL_ERROR`      | Unexpected server error (details are logged, never returned) |
 
 Validation errors also include `fields`, one message per invalid field:
 
@@ -31,16 +43,6 @@ Validation errors also include `fields`, one message per invalid field:
   }
 }
 ```
-
-| Status | Code                  | When                                                         |
-| ------ | --------------------- | ------------------------------------------------------------ |
-| 400    | `INVALID_JSON`        | Request body is not valid JSON                               |
-| 400    | `VALIDATION_ERROR`    | Request body fails validation (see `fields`)                 |
-| 401    | `UNAUTHORIZED`        | Missing, invalid or expired token                            |
-| 401    | `INVALID_CREDENTIALS` | Wrong email or password (same message for both)              |
-| 404    | `NOT_FOUND`           | Route does not exist                                         |
-| 409    | `EMAIL_TAKEN`         | An account with this email already exists                    |
-| 500    | `INTERNAL_ERROR`      | Unexpected server error (details are logged, never returned) |
 
 ## Health
 
@@ -118,7 +120,8 @@ Public.
 
 **200**: same shape as register (`token`, `user`, `tenant`).
 
-Errors: `400 VALIDATION_ERROR`, `401 INVALID_CREDENTIALS`.
+Errors: `400 VALIDATION_ERROR`, `401 INVALID_CREDENTIALS`, `403 TENANT_INACTIVE` (only after a
+correct password).
 
 ### `GET /api/auth/me`
 
@@ -126,6 +129,6 @@ Requires a token. Returns the logged-in user and their tenant.
 
 **200**: `{ "user": { … }, "tenant": { … } }` (same fields as above).
 
-Errors: `401 UNAUTHORIZED`.
+Errors: `401 UNAUTHORIZED`, `403 TENANT_INACTIVE`.
 
 Passwords, password hashes and Shopify access tokens are never returned by any endpoint.

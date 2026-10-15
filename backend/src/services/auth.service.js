@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const { prisma } = require('../config/prisma');
 const { BCRYPT_SALT_ROUNDS } = require('../config/auth');
 const AppError = require('../utils/AppError');
+const assertTenantActive = require('../utils/assertTenantActive');
 const { signToken } = require('../utils/jwt');
 
 // Only these columns ever leave the API. password_hash and shopify_access_token never do.
@@ -22,7 +23,13 @@ const DUMMY_PASSWORD_HASH = '$2b$12$eiELUHpOB6XvPtVVj2HQWOvyqFeHRexQ7cLFnVavB2/w
 const INVALID_CREDENTIALS = () =>
   new AppError('Invalid email or password', 401, 'INVALID_CREDENTIALS');
 
-const isUniqueViolation = (err) => err?.code === 'P2002';
+// P2002 = Prisma unique constraint violation. Only treat it as "email taken"
+// when the email column is the one that conflicted.
+const isEmailUniqueViolation = (err) => {
+  if (err?.code !== 'P2002') return false;
+  const target = err.meta?.target;
+  return [].concat(target ?? []).some((t) => String(t).includes('email'));
+};
 
 const toProfile = ({ tenant, ...user }) => ({ user, tenant });
 
@@ -45,7 +52,7 @@ const register = async ({ name, email, password, storeName }) => {
 
     return { token: signToken({ userId: user.id, tenantId: tenant.id }), user, tenant };
   } catch (err) {
-    if (isUniqueViolation(err)) {
+    if (isEmailUniqueViolation(err)) {
       throw new AppError('An account with this email already exists', 409, 'EMAIL_TAKEN');
     }
     throw err;
@@ -64,6 +71,9 @@ const login = async ({ email, password }) => {
   );
   if (!record || !passwordMatches) throw INVALID_CREDENTIALS();
 
+  // Checked only after the password, so a 403 never reveals that an email exists.
+  assertTenantActive(record.tenant);
+
   const { user, tenant } = toProfile(record);
   delete user.passwordHash;
 
@@ -78,6 +88,7 @@ const getProfile = async ({ userId, tenantId }) => {
   });
 
   if (!record) throw new AppError('Account no longer exists', 401, 'UNAUTHORIZED');
+  assertTenantActive(record.tenant);
 
   return toProfile(record);
 };

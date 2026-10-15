@@ -69,6 +69,18 @@ describe('POST /api/auth/register', () => {
     expect(fake.db.users).toHaveLength(1);
   });
 
+  it.each([
+    ['another column (shop_domain)', () => fake.uniqueViolation('Tenant', 'shop_domain')],
+    ['an unknown column', () => Object.assign(new Error('Unique failed'), { code: 'P2002' })],
+  ])('does not report EMAIL_TAKEN for a unique violation on %s', async (_label, makeError) => {
+    jest.spyOn(fake.prisma.tenant, 'create').mockRejectedValueOnce(makeError());
+
+    const res = await register();
+
+    expect(res.status).toBe(500);
+    expect(res.body.error.code).toBe('INTERNAL_ERROR');
+  });
+
   it('returns 400 with an error per invalid field', async () => {
     const res = await register({ name: '', email: 'not-an-email', password: 'short' });
 
@@ -134,6 +146,24 @@ describe('POST /api/auth/login', () => {
       password: 'Password is required',
     });
   });
+
+  it('returns 403 for a deactivated store, but only after the password is verified', async () => {
+    fake.db.tenants[0].isActive = false;
+
+    const rightPassword = await login({
+      email: 'asha@store.com',
+      password: validRegistration.password,
+    });
+    const wrongPassword = await login({ email: 'asha@store.com', password: 'wrong-password' });
+
+    expect(rightPassword.status).toBe(403);
+    expect(rightPassword.body.error).toEqual({
+      message: 'This store has been deactivated',
+      code: 'TENANT_INACTIVE',
+    });
+    expect(rightPassword.body.token).toBeUndefined();
+    expect(wrongPassword.status).toBe(401);
+  });
 });
 
 describe('GET /api/auth/me', () => {
@@ -179,5 +209,25 @@ describe('GET /api/auth/me', () => {
     const res = await me(crossTenant);
 
     expect(res.status).toBe(401);
+  });
+
+  it('returns 403 straight away when the store is deactivated after the token was issued', async () => {
+    const { body } = await register();
+    fake.db.tenants[0].isActive = false;
+
+    const res = await me(body.token);
+
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('TENANT_INACTIVE');
+  });
+
+  it('returns 401 when the store no longer exists', async () => {
+    const { body } = await register();
+    fake.reset();
+
+    const res = await me(body.token);
+
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe('UNAUTHORIZED');
   });
 });

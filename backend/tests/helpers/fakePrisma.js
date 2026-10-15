@@ -1,9 +1,17 @@
 // In-memory stand-in for the parts of Prisma the auth code uses, so tests run without Postgres.
-// It mimics the behaviour that matters: `select`, the unique email constraint (P2002)
-// and transactions that roll back on error.
+// It mimics the behaviour that matters: `select`, unique constraints (P2002 with the same
+// `meta` shape real Prisma returns on PostgreSQL) and transactions that roll back on error.
 const { randomUUID } = require('crypto');
 
 const db = { tenants: [], users: [] };
+
+// Real Prisma on PostgreSQL: { code: 'P2002', meta: { modelName: 'User', target: ['email'] } }
+const uniqueViolation = (modelName, column) => {
+  const err = new Error(`Unique constraint failed on the fields: (\`${column}\`)`);
+  err.code = 'P2002';
+  err.meta = { modelName, target: [column] };
+  return err;
+};
 
 const pick = (row, select) => {
   if (!row) return null;
@@ -31,16 +39,22 @@ const prisma = {
         updatedAt: new Date(),
         ...data,
       };
+      if (row.shopDomain && db.tenants.some((t) => t.shopDomain === row.shopDomain)) {
+        throw uniqueViolation('Tenant', 'shop_domain');
+      }
       db.tenants.push(row);
       return pick(row, select);
     },
+    findUnique: async ({ where, select }) =>
+      pick(
+        db.tenants.find((t) => t.id === where.id),
+        select,
+      ),
   },
   user: {
     create: async ({ data, select }) => {
       if (db.users.some((u) => u.email === data.email)) {
-        const err = new Error('Unique constraint failed on the fields: (`email`)');
-        err.code = 'P2002';
-        throw err;
+        throw uniqueViolation('User', 'email');
       }
       const row = {
         id: randomUUID(),
@@ -78,4 +92,4 @@ const reset = () => {
   db.users = [];
 };
 
-module.exports = { prisma, db, reset };
+module.exports = { prisma, db, reset, uniqueViolation };
