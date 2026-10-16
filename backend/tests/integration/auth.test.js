@@ -189,13 +189,24 @@ describe('GET /api/auth/me', () => {
   it.each([
     ['malformed', () => 'not-a-jwt'],
     ['signed with another secret', () => jwt.sign({ userId: 'u', tenantId: 't' }, 'other-secret')],
-    ['expired', () => jwt.sign({ userId: 'u', tenantId: 't' }, SECRET, { expiresIn: -10 })],
     ['missing tenantId', () => jwt.sign({ userId: 'u' }, SECRET)],
   ])('returns 401 for a %s token', async (_label, makeToken) => {
     const res = await me(makeToken());
 
     expect(res.status).toBe(401);
     expect(res.body.error.code).toBe('UNAUTHORIZED');
+  });
+
+  it('returns 401 with TOKEN_EXPIRED for an expired token', async () => {
+    const { body } = await register();
+    const expired = jwt.sign({ userId: body.user.id, tenantId: body.tenant.id }, SECRET, {
+      expiresIn: -10,
+    });
+
+    const res = await me(expired);
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toEqual({ message: 'Token has expired', code: 'TOKEN_EXPIRED' });
   });
 
   it("returns 401 when the token's tenantId doesn't own the user", async () => {

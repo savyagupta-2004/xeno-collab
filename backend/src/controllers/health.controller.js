@@ -1,13 +1,8 @@
-const { checkDatabaseConnection } = require('../config/prisma');
+const healthService = require('../services/health.service');
 
 const getHealth = async (req, res) => {
-  const dbUp = await checkDatabaseConnection();
-
-  res.status(dbUp ? 200 : 503).json({
-    status: dbUp ? 'ok' : 'degraded',
-    db: dbUp ? 'up' : 'down',
-    timestamp: new Date().toISOString(),
-  });
+  const { healthy, body } = await healthService.getHealth();
+  res.status(healthy ? 200 : 503).json(body);
 };
 
 module.exports = { getHealth };

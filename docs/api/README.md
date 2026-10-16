@@ -11,7 +11,11 @@ Authorization: Bearer <token>
 ```
 
 The token is valid for 24 hours and carries `userId` and `tenantId`. If the store is deactivated,
-existing tokens are rejected immediately with `403 TENANT_INACTIVE`.
+existing tokens are rejected immediately with `403 TENANT_INACTIVE`. An expired token returns
+`401 TOKEN_EXPIRED`.
+
+Every protected endpoint only sees the caller's own tenant. Asking for another tenant's record
+returns `404 NOT_FOUND`, exactly like a record that doesn't exist.
 
 ## Error format
 
@@ -25,10 +29,11 @@ Every error response has this shape:
 | ------ | --------------------- | ------------------------------------------------------------ |
 | 400    | `INVALID_JSON`        | Request body is not valid JSON                               |
 | 400    | `VALIDATION_ERROR`    | Request body fails validation (see `fields` below)           |
-| 401    | `UNAUTHORIZED`        | Missing, invalid or expired token                            |
+| 401    | `UNAUTHORIZED`        | Missing or invalid token                                     |
+| 401    | `TOKEN_EXPIRED`       | The token has expired; log in again                          |
 | 401    | `INVALID_CREDENTIALS` | Wrong email or password (same message for both)              |
 | 403    | `TENANT_INACTIVE`     | The store has been deactivated                               |
-| 404    | `NOT_FOUND`           | Route does not exist                                         |
+| 404    | `NOT_FOUND`           | Route or record not found (incl. another tenant's record)    |
 | 409    | `EMAIL_TAKEN`         | An account with this email already exists                    |
 | 500    | `INTERNAL_ERROR`      | Unexpected server error (details are logged, never returned) |
 
@@ -129,6 +134,28 @@ Requires a token. Returns the logged-in user and their tenant.
 
 **200**: `{ "user": { … }, "tenant": { … } }` (same fields as above).
 
-Errors: `401 UNAUTHORIZED`, `403 TENANT_INACTIVE`.
+Errors: `401 UNAUTHORIZED`, `401 TOKEN_EXPIRED`, `403 TENANT_INACTIVE`.
 
 Passwords, password hashes and Shopify access tokens are never returned by any endpoint.
+
+## Records
+
+All require a token and only return the caller's own tenant's data. `:id` is the record's numeric
+id. Money fields are decimal strings in INR without trailing zeros, e.g. `"998"` or `"499.5"`.
+
+Errors for all three: `401 UNAUTHORIZED`, `401 TOKEN_EXPIRED`, `403 TENANT_INACTIVE`,
+`404 NOT_FOUND` (missing id, invalid id, or another tenant's record).
+
+### `GET /api/customers/:id`
+
+**200**: `{ "customer": { "id": 3, "shopifyCustomerId": "…", "email": "…", "totalSpent": "…", … } }`
+
+### `GET /api/products/:id`
+
+**200**: `{ "product": { "id": 1, "shopifyProductId": "…", "title": "…", "price": "…", … } }`
+
+### `GET /api/orders/:id`
+
+Includes the order's line items.
+
+**200**: `{ "order": { "id": 2, "shopifyOrderId": "…", "totalPrice": "…", "lineItems": [ … ], … } }`
