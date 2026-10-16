@@ -11,7 +11,7 @@ const login = async (req, res) => {
 };
 
 const me = async (req, res) => {
-  const profile = await authService.getProfile(req.auth);
+  const profile = await authService.getProfile({ userId: req.user.id, tenantId: req.tenantId });
   res.status(200).json(profile);
 };
 
