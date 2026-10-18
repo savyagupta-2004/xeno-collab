@@ -1,26 +1,28 @@
 // Tenant-scoped database access.
 //
-// forTenant(tenantId) returns a Prisma client where every query is automatically limited to
-// one tenant: reads/updates/deletes get `AND tenant_id = <tenantId>`, creates get tenantId set,
-// and writing into another tenant throws. Services must use this instead of the base client
-// (enforced by ESLint, see eslint.config.js). Exceptions that need the base client on purpose
-// (registering a tenant, logging in by email) live in auth.service.js.
+// forTenant(tenantId) returns a Prisma client where every query is limited to one tenant:
+// - reads/updates/deletes get `AND tenantId = <tenantId>` (Tenant itself: `AND id = <tenantId>`)
+// - creates get tenantId set, and writing into another tenant throws
+// - nested relation reads (`include` / `select`) are scoped too: list relations get the same
+//   tenant filter, and a single related record owned by another tenant comes back as null
+// - raw SQL is blocked, because it can't be scoped automatically
 //
-// Not covered by the extension, so handle them explicitly if you ever need them:
-// - nested writes (e.g. order.create with lineItems: { create: [...] }) must set tenantId on children
-// - raw SQL is blocked on the scoped client; use the base client and filter tenant_id yourself
+// Which models are tenant-owned is read from the Prisma schema itself (any model with a
+// `tenantId` field), so this file can't drift from schema.prisma. A new model that is neither
+// Tenant nor has tenantId is rejected until its ownership is handled here.
+//
+// Not covered: nested writes (e.g. order.create with lineItems: { create: [...] }) must set
+// tenantId on the child rows themselves.
+const { Prisma } = require('@prisma/client');
 const { prisma } = require('../config/prisma');
 
-// Every model must be listed here, so a new model can't be left unscoped by accident.
-const TENANT_SCOPED_MODELS = new Set([
-  'User',
-  'Customer',
-  'Product',
-  'Order',
-  'OrderLineItem',
-  'Event',
-  'SyncLog',
-]);
+const MODELS = new Map(Prisma.dmmf.datamodel.models.map((model) => [model.name, model]));
+
+const TENANT_SCOPED_MODELS = new Set(
+  [...MODELS.values()]
+    .filter((model) => model.fields.some((f) => f.name === 'tenantId' && f.kind === 'scalar'))
+    .map((model) => model.name),
+);
 
 // Operations whose `where` must be limited to the tenant.
 const FILTERED_OPERATIONS = new Set([
@@ -40,6 +42,9 @@ const FILTERED_OPERATIONS = new Set([
   'upsert',
 ]);
 
+// Operations where `select` means aggregate fields, not relations to load.
+const AGGREGATE_OPERATIONS = new Set(['count', 'aggregate', 'groupBy']);
+
 // A tenant-scoped client may read and update its own Tenant row, but never create or delete tenants.
 const TENANT_OPERATIONS_BLOCKED = new Set([
   'create',
@@ -52,12 +57,121 @@ const TENANT_OPERATIONS_BLOCKED = new Set([
 
 const toArray = (value) => (value === undefined ? [] : [].concat(value));
 
+const assertKnownModel = (model) => {
+  if (model !== 'Tenant' && !TENANT_SCOPED_MODELS.has(model)) {
+    throw new Error(`Model ${model} has no tenantId; define its tenant ownership in tenantDb.js`);
+  }
+};
+
+// The field that says which tenant a row belongs to.
+const ownerKey = (model) => (model === 'Tenant' ? 'id' : 'tenantId');
+
+const relationOf = (model, field) => {
+  const def = MODELS.get(model)?.fields.find((f) => f.name === field && f.kind === 'object');
+  return def ? { target: def.type, isList: def.isList } : null;
+};
+
 // Keeps the caller's filter and adds the tenant condition with AND, so a caller can narrow the
 // result but never widen it (e.g. asking for another tenant's id simply matches nothing).
-const withTenantFilter = (where = {}, condition) => ({
+const withTenantFilter = (where = {}, model, tenantId) => ({
   ...where,
-  AND: [...toArray(where.AND), condition],
+  AND: [...toArray(where.AND), { [ownerKey(model)]: tenantId }],
 });
+
+// Rewrites an `include` / `select` tree so related records are scoped too:
+// - list relations get the tenant filter in their own `where`
+// - single relations get their owner key selected, so the result can be checked afterwards
+const scopeSelection = (model, selection, tenantId) => {
+  if (!selection || typeof selection !== 'object') return selection;
+
+  const scoped = { ...selection };
+  for (const [field, value] of Object.entries(selection)) {
+    if (!value) continue;
+
+    if (field === '_count') {
+      scoped._count = scopeCount(model, value, tenantId);
+      continue;
+    }
+
+    const relation = relationOf(model, field);
+    if (!relation) continue;
+    assertKnownModel(relation.target);
+
+    const nested = value === true ? {} : { ...value };
+    if (relation.isList) {
+      nested.where = withTenantFilter(nested.where, relation.target, tenantId);
+    } else if (nested.select && !nested.select[ownerKey(relation.target)]) {
+      nested.select = { ...nested.select, [ownerKey(relation.target)]: true };
+    }
+    if (nested.include) nested.include = scopeSelection(relation.target, nested.include, tenantId);
+    if (nested.select) nested.select = scopeSelection(relation.target, nested.select, tenantId);
+
+    scoped[field] = Object.keys(nested).length === 0 ? true : nested;
+  }
+  return scoped;
+};
+
+// `_count: true` or `_count: { select: { lineItems: true } }` -> each count gets the tenant filter.
+const scopeCount = (model, value, tenantId) => {
+  const fields =
+    value === true
+      ? MODELS.get(model)
+          .fields.filter((f) => f.kind === 'object' && f.isList)
+          .map((f) => f.name)
+      : Object.keys(value.select ?? {}).filter((f) => value.select[f]);
+
+  const select = {};
+  for (const field of fields) {
+    const relation = relationOf(model, field);
+    assertKnownModel(relation.target);
+    const option = value.select?.[field];
+    const where = option && typeof option === 'object' ? option.where : undefined;
+    select[field] = { where: withTenantFilter(where, relation.target, tenantId) };
+  }
+  return { select };
+};
+
+// After the query: a single related record owned by another tenant becomes null (as if it
+// didn't exist), and owner keys added only for this check are removed again.
+const verifyResult = (model, result, originalSelection, scopedSelection, tenantId) => {
+  if (!result || typeof result !== 'object' || !scopedSelection) return result;
+  if (Array.isArray(result)) {
+    return result.map((row) =>
+      verifyResult(model, row, originalSelection, scopedSelection, tenantId),
+    );
+  }
+
+  const out = { ...result };
+  for (const [field, scopedValue] of Object.entries(scopedSelection)) {
+    const relation = relationOf(model, field);
+    if (!relation || !(field in out) || out[field] === null) continue;
+
+    const originalValue = originalSelection?.[field];
+    const nestedScoped = scopedValue === true ? undefined : scopedValue;
+    const nestedOriginal = originalValue === true ? undefined : originalValue;
+    const key = ownerKey(relation.target);
+
+    if (!relation.isList && out[field][key] !== tenantId) {
+      out[field] = null;
+      continue;
+    }
+
+    out[field] = verifyResult(
+      relation.target,
+      out[field],
+      nestedOriginal?.select ?? nestedOriginal?.include,
+      nestedScoped?.select ?? nestedScoped?.include,
+      tenantId,
+    );
+
+    // Drop the owner key if we only selected it for the check above.
+    if (!relation.isList && nestedOriginal?.select && !nestedOriginal.select[key]) {
+      out[field] = { ...out[field] };
+      delete out[field][key];
+    }
+  }
+  return out;
+};
 
 const assertSameTenant = (data, tenantId, model) => {
   if (data && data.tenantId !== undefined && data.tenantId !== tenantId) {
@@ -72,22 +186,24 @@ const stampTenant = (data, tenantId, model) => {
 
 // Pure function: returns the args Prisma should actually run for this tenant.
 const scopeArgs = ({ model, operation, args = {} }, tenantId) => {
-  if (model === 'Tenant') {
-    if (TENANT_OPERATIONS_BLOCKED.has(operation)) {
-      throw new Error(`Tenant.${operation} is not allowed on a tenant-scoped client`);
-    }
-    return { ...args, where: withTenantFilter(args.where, { id: tenantId }) };
-  }
+  assertKnownModel(model);
 
-  if (!TENANT_SCOPED_MODELS.has(model)) {
-    throw new Error(`Model ${model} is not classified in tenantDb.js`);
+  if (model === 'Tenant' && TENANT_OPERATIONS_BLOCKED.has(operation)) {
+    throw new Error(`Tenant.${operation} is not allowed on a tenant-scoped client`);
   }
 
   const scoped = { ...args };
 
   if (FILTERED_OPERATIONS.has(operation)) {
-    scoped.where = withTenantFilter(args.where, { tenantId });
+    scoped.where = withTenantFilter(args.where, model, tenantId);
   }
+
+  if (!AGGREGATE_OPERATIONS.has(operation)) {
+    if (args.include) scoped.include = scopeSelection(model, args.include, tenantId);
+    if (args.select) scoped.select = scopeSelection(model, args.select, tenantId);
+  }
+
+  if (model === 'Tenant') return scoped;
 
   switch (operation) {
     case 'create':
@@ -126,10 +242,19 @@ const forTenant = (tenantId) => {
         if (!model) {
           throw new Error(`${operation} is not tenant-scoped; use the base client deliberately`);
         }
-        return query(scopeArgs({ model, operation, args }, tenantId));
+        const scoped = scopeArgs({ model, operation, args }, tenantId);
+        const result = await query(scoped);
+        if (AGGREGATE_OPERATIONS.has(operation)) return result;
+        return verifyResult(
+          model,
+          result,
+          args?.select ?? args?.include,
+          scoped.select ?? scoped.include,
+          tenantId,
+        );
       },
     },
   });
 };
 
-module.exports = { forTenant, scopeArgs, TENANT_SCOPED_MODELS };
+module.exports = { forTenant, scopeArgs, verifyResult, TENANT_SCOPED_MODELS };

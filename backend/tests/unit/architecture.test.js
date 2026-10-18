@@ -90,6 +90,28 @@ const cases = [
     code: BASE_CLIENT,
     blocked: false,
   },
+  // Future sync code must not bypass the tenant scope either.
+  { name: 'job → base client', filePath: 'src/jobs/x.job.js', code: BASE_CLIENT, blocked: true },
+  {
+    name: 'webhook → base client',
+    filePath: 'src/webhooks/x.webhook.js',
+    code: BASE_CLIENT,
+    blocked: true,
+  },
+  {
+    name: 'webhook → @prisma/client',
+    filePath: 'src/webhooks/x.webhook.js',
+    code: PRISMA_PACKAGE,
+    blocked: true,
+  },
+  {
+    name: 'middleware → base client',
+    filePath: 'src/middleware/x.js',
+    code: BASE_CLIENT,
+    blocked: true,
+  },
+  { name: 'utils → base client', filePath: 'src/utils/x.js', code: BASE_CLIENT, blocked: true },
+  { name: 'job → tenantDb', filePath: 'src/jobs/x.job.js', code: SCOPED_CLIENT, blocked: false },
 ];
 
 describe('database access rules (ESLint)', () => {

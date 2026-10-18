@@ -128,6 +128,25 @@ it("returns an order with only its own line items, never another tenant's", asyn
   expect(JSON.stringify(res.body)).not.toContain(b.tenantId);
 });
 
+// Regression: a line item owned by tenant B but attached to tenant A's order (e.g. bad sync
+// data) must never come back through GET /api/orders/:id for either tenant.
+it("doesn't leak another tenant's line item attached to the caller's order", async () => {
+  fake.insert('orderLineItem', {
+    tenantId: b.tenantId,
+    orderId: a.records.order.id,
+    shopifyLineItemId: 'leak',
+    title: 'B secret item',
+    quantity: 1,
+    price: '1.00',
+  });
+
+  const res = await get(`/api/orders/${a.records.order.id}`, a.token);
+
+  expect(res.status).toBe(200);
+  expect(res.body.order.lineItems.map((item) => item.title)).toEqual(['a tee']);
+  expect(JSON.stringify(res.body)).not.toContain('B secret item');
+});
+
 it("rejects a forged token that pairs one tenant's user with another tenant", async () => {
   const forged = jwt.sign({ userId: a.userId, tenantId: b.tenantId }, process.env.JWT_SECRET);
 

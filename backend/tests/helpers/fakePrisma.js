@@ -80,7 +80,9 @@ const shapeRelation = (relModelKey, value, options) => {
   if (value === null) return null;
   const opts = options === true ? {} : options;
   if (Array.isArray(value)) {
-    return sortBy(value, opts.orderBy).map((r) => shape(relModelKey, r, opts));
+    return sortBy(value, opts.orderBy)
+      .filter((r) => matches(r, opts.where))
+      .map((r) => shape(relModelKey, r, opts));
   }
   return shape(relModelKey, value, opts);
 };

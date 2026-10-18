@@ -4,7 +4,12 @@ jest.mock('../../src/config/prisma', () => ({
 }));
 
 const fake = require('../helpers/fakePrisma');
-const { forTenant, scopeArgs } = require('../../src/services/tenantDb');
+const {
+  forTenant,
+  scopeArgs,
+  verifyResult,
+  TENANT_SCOPED_MODELS,
+} = require('../../src/services/tenantDb');
 
 const A = 'tenant-a';
 const B = 'tenant-b';
@@ -94,8 +99,87 @@ describe('scopeArgs', () => {
     expect(() => scope('Tenant', operation, {})).toThrow('not allowed');
   });
 
-  it('rejects models that are not classified, so a new table cannot be left unscoped', () => {
-    expect(() => scope('Webhook', 'findMany', {})).toThrow('not classified');
+  it('rejects a model without tenantId, so a new table cannot be left unscoped', () => {
+    expect(() => scope('Webhook', 'findMany', {})).toThrow('has no tenantId');
+  });
+});
+
+describe('tenant-owned models come from the Prisma schema', () => {
+  const { Prisma } = require('@prisma/client');
+  const schemaModels = Prisma.dmmf.datamodel.models.map((m) => m.name);
+
+  it('every model except Tenant has a direct tenantId and is scoped', () => {
+    expect([...TENANT_SCOPED_MODELS].sort()).toEqual(
+      schemaModels.filter((name) => name !== 'Tenant').sort(),
+    );
+  });
+
+  it('includes the line items and events tables under their schema names', () => {
+    expect(TENANT_SCOPED_MODELS.has('OrderLineItem')).toBe(true);
+    expect(TENANT_SCOPED_MODELS.has('Event')).toBe(true);
+  });
+});
+
+describe('nested relation reads', () => {
+  it('adds the tenant filter to list relations in include', () => {
+    const scoped = scope('Order', 'findUnique', {
+      where: { id: 1 },
+      include: { lineItems: { orderBy: { id: 'asc' } } },
+    });
+
+    expect(scoped.include.lineItems).toEqual({
+      orderBy: { id: 'asc' },
+      where: { AND: [{ tenantId: A }] },
+    });
+  });
+
+  it('scopes relations nested several levels deep, in select as well as include', () => {
+    const scoped = scope('Customer', 'findMany', {
+      select: { orders: { select: { lineItems: true } } },
+    });
+
+    expect(scoped.select.orders.where).toEqual({ AND: [{ tenantId: A }] });
+    expect(scoped.select.orders.select.lineItems).toEqual({ where: { AND: [{ tenantId: A }] } });
+  });
+
+  it('selects the owner key of single relations so the result can be checked', () => {
+    const scoped = scope('User', 'findUnique', {
+      where: { id: 'u' },
+      select: { tenant: { select: { isActive: true } } },
+    });
+
+    expect(scoped.select.tenant).toEqual({ select: { isActive: true, id: true } });
+  });
+
+  it('scopes _count of relations', () => {
+    const scoped = scope('Order', 'findMany', { include: { _count: true } });
+
+    expect(scoped.include._count).toEqual({
+      select: { lineItems: { where: { AND: [{ tenantId: A }] } } },
+    });
+  });
+
+  it('turns a single related record of another tenant into null and strips added keys', () => {
+    const original = { customer: { select: { email: true } } };
+    const scoped = scope('Order', 'findUnique', { where: { id: 1 }, select: original }).select;
+
+    const leaked = verifyResult(
+      'Order',
+      { customer: { email: 'b@b.com', tenantId: B } },
+      original,
+      scoped,
+      A,
+    );
+    const own = verifyResult(
+      'Order',
+      { customer: { email: 'a@a.com', tenantId: A } },
+      original,
+      scoped,
+      A,
+    );
+
+    expect(leaked.customer).toBeNull();
+    expect(own.customer).toEqual({ email: 'a@a.com' });
   });
 });
 
@@ -131,5 +215,46 @@ describe('forTenant', () => {
 
   it('blocks raw SQL, which the extension cannot scope', async () => {
     await expect(forTenant(A).$queryRaw`SELECT 1`).rejects.toThrow('not tenant-scoped');
+  });
+
+  // Regression: query extensions only see the top-level query, so a line item owned by another
+  // tenant (e.g. bad sync data) must not come back through an order's include.
+  it("never returns another tenant's line item through an order's include", async () => {
+    const order = fake.insert('order', { tenantId: A, shopifyOrderId: 'o1' });
+    fake.insert('orderLineItem', {
+      tenantId: A,
+      orderId: order.id,
+      shopifyLineItemId: 'own',
+      title: 'Own',
+    });
+    fake.insert('orderLineItem', {
+      tenantId: B,
+      orderId: order.id,
+      shopifyLineItemId: 'leak',
+      title: 'Leak',
+    });
+
+    const result = await forTenant(A).order.findUnique({
+      where: { id: order.id },
+      include: { lineItems: true },
+    });
+
+    expect(result.lineItems.map((item) => item.title)).toEqual(['Own']);
+  });
+
+  it("returns null instead of another tenant's customer linked to an order", async () => {
+    const otherCustomer = fake.insert('customer', { tenantId: B, shopifyCustomerId: 'c' });
+    const order = fake.insert('order', {
+      tenantId: A,
+      shopifyOrderId: 'o1',
+      customerId: otherCustomer.id,
+    });
+
+    const result = await forTenant(A).order.findUnique({
+      where: { id: order.id },
+      include: { customer: true },
+    });
+
+    expect(result.customer).toBeNull();
   });
 });

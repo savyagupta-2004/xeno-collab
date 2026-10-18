@@ -38,15 +38,21 @@ module.exports = [
       ],
     },
   },
-  // Tenant isolation: services query through forTenant(tenantId), never the unscoped client.
+  // Tenant isolation: all app code (services, middleware, jobs, webhooks, utils...) queries
+  // through forTenant(tenantId), never the unscoped client.
   {
-    files: ['src/services/**/*.js'],
-    // Allowed exceptions: tenantDb builds the scoped client, auth registers/logs in before a
-    // tenant is known, health only runs `SELECT 1`.
+    files: ['src/**/*.js'],
+    // Allowed exceptions: config/prisma creates the client, server only disconnects it on
+    // shutdown, tenantDb builds the scoped client, auth registers/logs in before a tenant is
+    // known, health only runs `SELECT 1`.
     ignores: [
+      'src/config/prisma.js',
+      'src/server.js',
       'src/services/tenantDb.js',
       'src/services/auth.service.js',
       'src/services/health.service.js',
+      'src/controllers/**/*.js',
+      'src/routes/**/*.js',
     ],
     rules: {
       'no-restricted-syntax': [
