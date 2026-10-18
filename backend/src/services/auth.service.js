@@ -1,5 +1,8 @@
+// register and login use the unscoped client on purpose: register creates the tenant, and
+// login finds the user by email before the tenant is known. Everything else uses forTenant().
 const bcrypt = require('bcryptjs');
 const { prisma } = require('../config/prisma');
+const { forTenant } = require('./tenantDb');
 const { BCRYPT_SALT_ROUNDS } = require('../config/auth');
 const AppError = require('../utils/AppError');
 const assertTenantActive = require('../utils/assertTenantActive');
@@ -81,9 +84,8 @@ const login = async ({ email, password }) => {
 };
 
 const getProfile = async ({ userId, tenantId }) => {
-  // Scoped by tenantId from the token, not just userId.
-  const record = await prisma.user.findFirst({
-    where: { id: userId, tenantId },
+  const record = await forTenant(tenantId).user.findUnique({
+    where: { id: userId },
     select: { ...USER_FIELDS, tenant: { select: TENANT_FIELDS } },
   });
 

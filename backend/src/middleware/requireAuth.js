@@ -1,40 +1,58 @@
-const { prisma } = require('../config/prisma');
 const AppError = require('../utils/AppError');
 const assertTenantActive = require('../utils/assertTenantActive');
 const { verifyToken } = require('../utils/jwt');
+const { forTenant } = require('../services/tenantDb');
 
-const invalidToken = () => new AppError('Invalid or expired token', 401, 'UNAUTHORIZED');
+// Exactly "Bearer <header>.<payload>.<signature>". The scheme name is case-insensitive
+// (RFC 7235), but nothing else is accepted: no other scheme, no extra parts.
+const BEARER_HEADER = /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Accepts `Authorization: Bearer <jwt>` and sets req.auth = { userId, tenantId }.
-// Every tenant-scoped query must use req.auth.tenantId.
+const isUuid = (value) => typeof value === 'string' && UUID.test(value);
+const invalidToken = () => new AppError('Invalid token', 401, 'UNAUTHORIZED');
+
+// Verifies `Authorization: Bearer <jwt>` and sets:
+//   req.user     = { id, tenantId, name, email }
+//   req.tenantId = the caller's tenant; services pass it to forTenant() for every query
 const requireAuth = async (req, res, next) => {
-  const [scheme, token] = (req.headers.authorization || '').split(' ');
-
-  if (scheme !== 'Bearer' || !token) {
+  const match = BEARER_HEADER.exec(req.headers.authorization || '');
+  if (!match) {
     throw new AppError('Authentication required', 401, 'UNAUTHORIZED');
   }
 
   let claims;
   try {
-    claims = verifyToken(token);
-  } catch {
+    claims = verifyToken(match[1]);
+  } catch (err) {
+    if (err.name === 'TokenExpiredError') {
+      throw new AppError('Token has expired', 401, 'TOKEN_EXPIRED');
+    }
     throw invalidToken();
   }
 
+  // Validate claim types before they reach the database, so a signed token with
+  // malformed claims is a 401, never a Prisma error (500).
   const { userId, tenantId } = claims;
-  if (!userId || !tenantId) throw invalidToken();
+  if (!isUuid(userId) || !isUuid(tenantId)) throw invalidToken();
 
-  // A JWT can't be revoked, so check the tenant on every request (one primary-key lookup):
-  // deleting or deactivating a store locks out its existing tokens immediately,
-  // instead of when they expire up to 24h later.
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: tenantId },
-    select: { isActive: true },
+  // A JWT can't be revoked, so look the user up on every request (one primary-key lookup,
+  // scoped to the token's tenant): deleting the user or store, or deactivating the store,
+  // locks out existing tokens immediately instead of when they expire up to 24h later.
+  const user = await forTenant(tenantId).user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      tenantId: true,
+      name: true,
+      email: true,
+      tenant: { select: { isActive: true } },
+    },
   });
-  if (!tenant) throw invalidToken();
-  assertTenantActive(tenant);
+  if (!user) throw invalidToken();
+  assertTenantActive(user.tenant);
 
-  req.auth = { userId, tenantId };
+  req.user = { id: user.id, tenantId: user.tenantId, name: user.name, email: user.email };
+  req.tenantId = tenantId;
   next();
 };
 
