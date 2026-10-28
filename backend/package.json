@@ -19,7 +19,9 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "seed:shopify": "node scripts/seed-shopify.js",
+    "shopify:token": "node scripts/shopify-token.js"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
