@@ -1,6 +1,14 @@
 // Creates the seed plan's products, customers and orders in a Shopify dev store.
-// Safe to re-run: everything is tagged, existing records are reused, and an interrupted run
-// continues where it stopped instead of creating duplicates.
+//
+// Re-running is safe:
+// - everything is tagged; existing products, customers and orders are reused, never recreated,
+//   modified or deleted
+// - an interrupted run continues where it stopped, and also finishes orders it created but
+//   didn't get to refund or cancel
+// - mutations Shopify can't deduplicate (orderCreate, productSet, customerCreate, orderCancel)
+//   are never blindly retried: if a reply is lost, the record is looked up first
+// - refunds use idempotency keys, so a refund can't happen twice
+// - a store seeded with one plan (--size/--seed) refuses a different plan instead of mixing them
 const { createHash } = require('crypto');
 const { assertNoUserErrors, ShopifyError } = require('./client');
 const { SEED_TAG } = require('./seedPlan');
@@ -9,10 +17,21 @@ const { SEED_TAG } = require('./seedPlan');
 const ORDER_INTERVAL_MS = 12_500;
 const ORDER_LIMIT_RETRY_MS = 60_000;
 const MAX_ORDER_ATTEMPTS = 3;
+// After a lost reply, Shopify's search can take a few seconds to show the new record.
+const LOOKUP_DELAYS_MS = [5_000, 10_000, 20_000];
+// Order cancellation is an asynchronous job; poll it for up to ~1 minute.
+const CANCEL_POLL_DELAYS_MS = [
+  1_000, 1_000, 2_000, 2_000, 3_000, 5_000, 5_000, 10_000, 10_000, 15_000,
+];
+// Keeps each page of the existing-orders query well under Shopify's query cost limit.
+const ORDERS_PAGE_SIZE = 25;
 
 const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const orderKeyTag = (key) => `${SEED_TAG}-key:${key}`;
+const KEY_TAG_PREFIX = `${SEED_TAG}-key:`;
+const PLAN_TAG_PREFIX = `${SEED_TAG}-plan:`;
 const seedQuery = `tag:${SEED_TAG}`;
+const planTag = (plan) => `${PLAN_TAG_PREFIX}${plan.size}-${plan.seed}`;
+const tagValue = (tags, prefix) => tags.find((t) => t.startsWith(prefix))?.slice(prefix.length);
 
 const SHOP_QUERY = `query SeedShop { shop { name currencyCode myshopifyDomain } }`;
 
@@ -44,21 +63,25 @@ const CREATE_CUSTOMER = `mutation SeedCreateCustomer($input: CustomerInput!) {
   }
 }`;
 
-const EXISTING_ORDERS = `query SeedExistingOrders($query: String!, $cursor: String) {
-  orders(first: 100, after: $cursor, query: $query) {
-    nodes { id tags }
+const ORDER_FIELDS = `
+  id
+  name
+  tags
+  cancelledAt
+  transactions(first: 5) { id kind gateway amountSet { shopMoney { amount } } }
+  lineItems(first: 10) { nodes { id quantity } }
+  refunds(first: 5) { id }`;
+
+const EXISTING_ORDERS = `query SeedExistingOrders($query: String!, $first: Int!, $cursor: String) {
+  orders(first: $first, after: $cursor, query: $query) {
+    nodes { ${ORDER_FIELDS} }
     pageInfo { hasNextPage endCursor }
   }
 }`;
 
 const CREATE_ORDER = `mutation SeedCreateOrder($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
   orderCreate(order: $order, options: $options) {
-    order {
-      id
-      name
-      transactions(first: 5) { id kind gateway amountSet { shopMoney { amount } } }
-      lineItems(first: 10) { nodes { id quantity } }
-    }
+    order { ${ORDER_FIELDS} }
     userErrors { field message }
   }
 }`;
@@ -71,7 +94,6 @@ const REFUND_ORDER = `mutation SeedRefundOrder($input: RefundInput!, $key: Strin
   }
 }`;
 
-// Cancellation runs asynchronously on Shopify's side; the job finishes on its own.
 const CANCEL_ORDER = `mutation SeedCancelOrder($orderId: ID!) {
   orderCancel(
     orderId: $orderId
@@ -80,9 +102,23 @@ const CANCEL_ORDER = `mutation SeedCancelOrder($orderId: ID!) {
     notifyCustomer: false
     staffNote: "Seed data: cancelled by customer"
   ) {
-    job { id done }
+    jobResult { id done status }
     orderCancelUserErrors { field message code }
   }
+}`;
+
+const CANCEL_JOB_STATUS = `query SeedCancelJobStatus($id: ID!) {
+  node(id: $id) {
+    ... on OrderCancelJobResult {
+      done
+      status
+      errors { field message code }
+    }
+  }
+}`;
+
+const ORDER_CANCELLED_AT = `query SeedOrderCancelledAt($id: ID!) {
+  order(id: $id) { id cancelledAt }
 }`;
 
 const COUNTS = `query SeedCounts($query: String!) {
@@ -99,29 +135,79 @@ const idempotencyKey = (...parts) => {
 
 const money = (value) => (Math.round(value * 100) / 100).toFixed(2);
 
-const seedProducts = async ({ client, plan, log }) => {
-  const { products } = await client.graphql(EXISTING_PRODUCTS, { query: seedQuery });
-  const byTitle = new Map(products.nodes.map((p) => [p.title, p]));
+// Runs a create that Shopify can't deduplicate. If the reply is lost, the record may or may not
+// exist, so look for it (search can lag a few seconds) before trying once more.
+const createSafely = async ({ create, find, label, log, sleep }) => {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      return await create();
+    } catch (err) {
+      if (!err.outcomeUnknown || attempt === 2) throw err;
+      log(`  … no reply from Shopify for ${label}; checking whether it was created`);
+      for (const delay of LOOKUP_DELAYS_MS) {
+        await sleep(delay);
+        const found = await find();
+        if (found) {
+          log(`  … ${label} had been created, reusing it`);
+          return found;
+        }
+      }
+      log(`  … ${label} wasn't created, trying again`);
+    }
+  }
+  throw new ShopifyError(`Could not create ${label}`);
+};
+
+const seedProducts = async ({ client, plan, log, sleep }) => {
+  const fetchSeeded = async () => {
+    const { products } = await client.graphql(EXISTING_PRODUCTS, { query: seedQuery });
+    return products.nodes;
+  };
+
+  const byTitle = new Map();
+  for (const product of await fetchSeeded()) {
+    if (byTitle.has(product.title))
+      log(`  ! duplicate seeded product "${product.title}"; using the first`);
+    else byTitle.set(product.title, product);
+  }
+
   const result = [];
   let created = 0;
 
   for (const item of plan.products) {
     let product = byTitle.get(item.title);
     if (!product) {
-      const data = await client.graphql(CREATE_PRODUCT, {
-        input: {
-          title: item.title,
-          vendor: item.vendor,
-          productType: item.productType,
-          status: 'ACTIVE',
-          tags: [SEED_TAG],
-          productOptions: [{ name: 'Title', position: 1, values: [{ name: 'Default Title' }] }],
-          variants: [
-            { optionValues: [{ optionName: 'Title', name: 'Default Title' }], price: item.price },
-          ],
+      product = await createSafely({
+        label: `product "${item.title}"`,
+        log,
+        sleep,
+        find: async () => (await fetchSeeded()).find((p) => p.title === item.title),
+        create: async () => {
+          const data = await client.graphql(
+            CREATE_PRODUCT,
+            {
+              input: {
+                title: item.title,
+                vendor: item.vendor,
+                productType: item.productType,
+                status: 'ACTIVE',
+                tags: [SEED_TAG],
+                productOptions: [
+                  { name: 'Title', position: 1, values: [{ name: 'Default Title' }] },
+                ],
+                variants: [
+                  {
+                    optionValues: [{ optionName: 'Title', name: 'Default Title' }],
+                    price: item.price,
+                  },
+                ],
+              },
+            },
+            { idempotent: false },
+          );
+          return assertNoUserErrors(data.productSet, `Creating product "${item.title}"`).product;
         },
       });
-      product = assertNoUserErrors(data.productSet, `Creating product "${item.title}"`).product;
       created += 1;
       log(`  + product ${item.title}`);
     }
@@ -132,34 +218,61 @@ const seedProducts = async ({ client, plan, log }) => {
   return { items: result, created, existing: plan.products.length - created };
 };
 
-const seedCustomers = async ({ client, plan, log }) => {
+const seedCustomers = async ({ client, plan, log, sleep }) => {
   const { customers } = await client.graphql(EXISTING_CUSTOMERS, { query: seedQuery });
   // Emails can be null here if the app lacks protected customer data access; then a create
   // fails with "taken" and the customer is looked up by email instead.
   const byEmail = new Map(
     customers.nodes.filter((c) => c.email).map((c) => [c.email.toLowerCase(), c.id]),
   );
+  const findByEmail = async (email) => {
+    const found = await client.graphql(FIND_CUSTOMER, { query: `email:"${email}"` });
+    return found.customers.nodes[0]?.id;
+  };
+
   const ids = [];
   let created = 0;
 
   for (const item of plan.customers) {
     let id = byEmail.get(item.email);
     if (!id) {
-      const data = await client.graphql(CREATE_CUSTOMER, {
-        input: {
-          firstName: item.firstName,
-          lastName: item.lastName,
-          email: item.email,
-          tags: [SEED_TAG],
+      const result = await createSafely({
+        label: `customer ${item.email}`,
+        log,
+        sleep,
+        find: async () => {
+          const found = await findByEmail(item.email);
+          return found && { id: found, existed: true };
+        },
+        create: async () => {
+          const data = await client.graphql(
+            CREATE_CUSTOMER,
+            {
+              input: {
+                firstName: item.firstName,
+                lastName: item.lastName,
+                email: item.email,
+                tags: [SEED_TAG],
+              },
+            },
+            { idempotent: false },
+          );
+          const errors = data.customerCreate.userErrors;
+          if (errors.length > 0 && errors.every((e) => /taken/i.test(e.message))) {
+            const found = await findByEmail(item.email);
+            if (!found)
+              throw new ShopifyError(`Customer ${item.email} exists but could not be found`);
+            return { id: found, existed: true };
+          }
+          return {
+            id: assertNoUserErrors(data.customerCreate, `Creating customer ${item.email}`).customer
+              .id,
+            existed: false,
+          };
         },
       });
-      const errors = data.customerCreate.userErrors;
-      if (errors.length > 0 && errors.every((e) => /taken/i.test(e.message))) {
-        const found = await client.graphql(FIND_CUSTOMER, { query: `email:"${item.email}"` });
-        id = found.customers.nodes[0]?.id;
-        if (!id) throw new ShopifyError(`Customer ${item.email} exists but could not be found`);
-      } else {
-        id = assertNoUserErrors(data.customerCreate, `Creating customer ${item.email}`).customer.id;
+      id = result.id;
+      if (!result.existed) {
         created += 1;
         log(`  + customer ${item.firstName} ${item.lastName}`);
       }
@@ -170,39 +283,71 @@ const seedCustomers = async ({ client, plan, log }) => {
   return { ids, created, existing: plan.customers.length - created };
 };
 
-const existingOrderKeys = async (client) => {
-  const keys = new Set();
+// All seeded orders, grouped by their plan key ("order-001" → [order, ...]).
+const fetchSeededOrders = async (client) => {
+  const byKey = new Map();
   let cursor = null;
   do {
-    const { orders } = await client.graphql(EXISTING_ORDERS, { query: seedQuery, cursor });
+    const { orders } = await client.graphql(EXISTING_ORDERS, {
+      query: seedQuery,
+      first: ORDERS_PAGE_SIZE,
+      cursor,
+    });
     for (const order of orders.nodes) {
-      for (const tag of order.tags) {
-        if (tag.startsWith(orderKeyTag(''))) keys.add(tag.slice(orderKeyTag('').length));
-      }
+      const key = tagValue(order.tags, KEY_TAG_PREFIX);
+      if (key) byKey.set(key, [...(byKey.get(key) || []), order]);
     }
     cursor = orders.pageInfo.hasNextPage ? orders.pageInfo.endCursor : null;
   } while (cursor);
-  return keys;
+  return byKey;
 };
 
-const createOrderWithRetry = async ({ client, variables, sleep, log, label }) => {
-  for (let attempt = 1; ; attempt += 1) {
-    const data = await client.graphql(CREATE_ORDER, variables);
-    const errors = data.orderCreate.userErrors;
-    const rateLimited = errors.some((e) => /limit|too many|throttl/i.test(e.message));
-    if (rateLimited && attempt < MAX_ORDER_ATTEMPTS) {
-      log(`  … Shopify's order limit was hit, waiting a minute before retrying ${label}`);
-      await sleep(ORDER_LIMIT_RETRY_MS);
-      continue;
+// Refuses to mix two different plans (sizes/seeds) in one store: the order keys would clash.
+// Orders seeded before plan tags existed have none and are treated as matching.
+const assertSamePlan = (byKey, plan) => {
+  const current = planTag(plan).slice(PLAN_TAG_PREFIX.length);
+  for (const orders of byKey.values()) {
+    for (const order of orders) {
+      const other = tagValue(order.tags, PLAN_TAG_PREFIX);
+      if (other && other !== current) {
+        throw new ShopifyError(
+          `This store was seeded with plan "${other}", not "${current}". Re-run with the same ` +
+            `--size (and --seed) as before; plans are never mixed in one store.`,
+        );
+      }
     }
-    return assertNoUserErrors(data.orderCreate, `Creating ${label}`).order;
   }
 };
+
+const createOrder = async ({ client, variables, sleep, log, label, key }) =>
+  createSafely({
+    label,
+    log,
+    sleep,
+    find: async () => (await fetchSeededOrders(client)).get(key)?.[0],
+    create: async () => {
+      for (let attempt = 1; ; attempt += 1) {
+        const data = await client.graphql(CREATE_ORDER, variables, { idempotent: false });
+        const errors = data.orderCreate.userErrors;
+        const rateLimited = errors.some((e) => /limit|too many|throttl/i.test(e.message));
+        if (rateLimited && attempt < MAX_ORDER_ATTEMPTS) {
+          log(`  … Shopify's order limit was hit, waiting a minute before retrying ${label}`);
+          await sleep(ORDER_LIMIT_RETRY_MS);
+          continue;
+        }
+        return assertNoUserErrors(data.orderCreate, `Creating ${label}`).order;
+      }
+    },
+  });
+
+const isRefunded = (order) => order.refunds.length > 0;
+const isCancelled = (order) => Boolean(order.cancelledAt);
 
 const refundOrder = async ({ client, order, domain, key }) => {
   const sale = order.transactions.find((t) => t.kind === 'SALE');
   if (!sale) throw new ShopifyError(`Order ${order.name} has no sale transaction to refund`);
 
+  // Idempotent: the same key always refers to this one refund, so retries are safe.
   const data = await client.graphql(REFUND_ORDER, {
     key: idempotencyKey(domain, key, 'refund'),
     input: {
@@ -227,9 +372,54 @@ const refundOrder = async ({ client, order, domain, key }) => {
   assertNoUserErrors(data.refundCreate, `Refunding ${order.name}`);
 };
 
-const cancelOrder = async ({ client, order }) => {
-  const data = await client.graphql(CANCEL_ORDER, { orderId: order.id });
-  assertNoUserErrors(data.orderCancel, `Cancelling ${order.name}`);
+const fetchCancelledAt = async (client, orderId) =>
+  (await client.graphql(ORDER_CANCELLED_AT, { id: orderId })).order?.cancelledAt ?? null;
+
+// Starts the cancellation and waits for Shopify's job to finish. Only returns once the order
+// is confirmed cancelled; otherwise throws (a re-run picks it up again).
+const cancelOrder = async ({ client, order, sleep }) => {
+  if (await fetchCancelledAt(client, order.id)) return;
+
+  let jobResult = null;
+  try {
+    const data = await client.graphql(CANCEL_ORDER, { orderId: order.id }, { idempotent: false });
+    jobResult = assertNoUserErrors(data.orderCancel, `Cancelling ${order.name}`).jobResult;
+  } catch (err) {
+    // A lost reply (or "already cancelled") is settled by the order's own status below.
+    if (!err.outcomeUnknown && !(await fetchCancelledAt(client, order.id))) throw err;
+  }
+
+  for (const delay of CANCEL_POLL_DELAYS_MS) {
+    if (jobResult?.id && !jobResult.done) {
+      const { node } = await client.graphql(CANCEL_JOB_STATUS, { id: jobResult.id });
+      jobResult = { ...jobResult, ...node };
+    }
+    if (jobResult?.status === 'FAILED' || jobResult?.errors?.length) {
+      const reason = (jobResult.errors || []).map((e) => e.message).join('; ') || 'job failed';
+      throw new ShopifyError(`Cancelling ${order.name} failed: ${reason}`);
+    }
+    // Once the job is done (or there's no job to poll), the order itself is the proof.
+    const jobFinished = !jobResult?.id || jobResult.done;
+    if (jobFinished && (await fetchCancelledAt(client, order.id))) return;
+    await sleep(delay);
+  }
+
+  throw new ShopifyError(
+    `Cancellation of ${order.name} hasn't finished yet. Re-run the seeder to finish it.`,
+  );
+};
+
+// Brings an order to its planned outcome (refunded / cancelled). Safe to call repeatedly.
+const applyOutcome = async ({ client, order, planned, domain, sleep }) => {
+  if (planned.outcome === 'refunded' && !isRefunded(order)) {
+    await refundOrder({ client, order, domain, key: planned.key });
+    return 'refunded';
+  }
+  if (planned.outcome === 'cancelled' && !isCancelled(order)) {
+    await cancelOrder({ client, order, sleep });
+    return 'cancelled';
+  }
+  return null;
 };
 
 const seedOrders = async ({
@@ -243,10 +433,40 @@ const seedOrders = async ({
   sleep,
   orderIntervalMs,
 }) => {
-  const existing = await existingOrderKeys(client);
-  const todo = plan.orders.filter((o) => !existing.has(o.key));
-  const stats = { created: 0, existing: existing.size, cancelled: 0, refunded: 0, guest: 0 };
+  const byKey = await fetchSeededOrders(client);
+  assertSamePlan(byKey, plan);
 
+  const stats = {
+    created: 0,
+    existing: 0,
+    repaired: 0,
+    cancelled: 0,
+    refunded: 0,
+    guest: 0,
+    duplicates: 0,
+  };
+
+  // Existing orders: never recreated or changed, except finishing a refund/cancel that an
+  // interrupted run didn't get to.
+  for (const planned of plan.orders) {
+    const orders = byKey.get(planned.key);
+    if (!orders) continue;
+    stats.existing += 1;
+    if (orders.length > 1) {
+      stats.duplicates += orders.length - 1;
+      log(
+        `  ! ${orders.length} orders share key ${planned.key} (${orders.map((o) => o.name).join(', ')}); not changing them`,
+      );
+    }
+    const done = await applyOutcome({ client, order: orders[0], planned, domain, sleep });
+    if (done) {
+      stats.repaired += 1;
+      stats[done] += 1;
+      log(`  ~ ${orders[0].name} finished: ${done}`);
+    }
+  }
+
+  const todo = plan.orders.filter((o) => !byKey.has(o.key));
   if (todo.length > 0) {
     const minutes = Math.ceil((todo.length * orderIntervalMs) / 60000);
     log(
@@ -264,10 +484,11 @@ const seedOrders = async ({
     const paid = planned.outcome !== 'cancelled';
     const guest = planned.customerIndex === null;
 
-    const order = await createOrderWithRetry({
+    const order = await createOrder({
       client,
       sleep,
       log,
+      key: planned.key,
       label: `order ${planned.key}`,
       variables: {
         options: { sendReceipt: false, sendFulfillmentReceipt: false },
@@ -292,7 +513,7 @@ const seedOrders = async ({
               },
             ],
           }),
-          tags: [SEED_TAG, orderKeyTag(planned.key)],
+          tags: [SEED_TAG, `${KEY_TAG_PREFIX}${planned.key}`, planTag(plan)],
           note: `Seed data (${planned.outcome}${guest ? ', guest checkout' : ''})`,
         },
       },
@@ -301,13 +522,8 @@ const seedOrders = async ({
     stats.created += 1;
     if (guest) stats.guest += 1;
 
-    if (planned.outcome === 'refunded') {
-      await refundOrder({ client, order, domain, key: planned.key });
-      stats.refunded += 1;
-    } else if (planned.outcome === 'cancelled') {
-      await cancelOrder({ client, order });
-      stats.cancelled += 1;
-    }
+    const done = await applyOutcome({ client, order, planned, domain, sleep });
+    if (done) stats[done] += 1;
 
     log(
       `  + ${order.name} ${planned.processedAt.slice(0, 10)} ₹${total} ${planned.outcome}${guest ? ' (guest)' : ''}` +
@@ -351,9 +567,9 @@ const seedStore = async ({
   }
 
   log(`Products (${plan.products.length})…`);
-  const products = await seedProducts({ client, plan, log });
+  const products = await seedProducts({ client, plan, log, sleep });
   log(`Customers (${plan.customers.length})…`);
-  const customers = await seedCustomers({ client, plan, log });
+  const customers = await seedCustomers({ client, plan, log, sleep });
   log(`Orders (${plan.orders.length})…`);
   const orders = await seedOrders({
     client,

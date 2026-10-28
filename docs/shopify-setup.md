@@ -107,7 +107,11 @@ Notes:
 - **It takes about 11 minutes** for the main store: development stores accept at most 5 new orders
   per minute, so the script spaces them out.
 - **Safe to re-run.** Everything it creates is tagged `xeno-seed`; existing products, customers
-  and orders are skipped, so an interrupted run just continues.
+  and orders are reused and never changed or deleted, so an interrupted run just continues. It
+  also finishes refunds or cancellations an interrupted run didn't get to, and refuses to mix a
+  different `--size`/`--seed` into a store that was already seeded.
+- **Cancellations** run as a background job in Shopify; the script waits for each job and
+  confirms the order is cancelled before moving on.
 - Order dates are back-dated (`processedAt`) across the last ~45 days. No emails are sent:
   receipts are off and every address is `@example.com`.
 - Afterwards, switch `backend/.env` back to the **Xeno Insights** (read-only) credentials for

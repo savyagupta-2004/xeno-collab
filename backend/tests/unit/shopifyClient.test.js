@@ -128,6 +128,47 @@ describe('createShopifyClient().graphql', () => {
     expect(sleep).toHaveBeenCalledWith(3000);
   });
 
+  it('retries a query after a network error', async () => {
+    const { client, fetchImpl } = setup(jsonResponse(200, { data: { ok: true } }));
+    fetchImpl.mockReset();
+    fetchImpl
+      .mockRejectedValueOnce(new TypeError('socket hang up'))
+      .mockResolvedValueOnce(jsonResponse(200, { data: { ok: true } }));
+
+    await expect(client.graphql('query { ok }')).resolves.toEqual({ ok: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['a network error', () => Promise.reject(new TypeError('socket hang up'))],
+    ['a 502', () => Promise.resolve(jsonResponse(502, {}))],
+  ])(
+    'never retries a non-idempotent mutation after %s (it may already be applied)',
+    async (_label, failure) => {
+      const { client, fetchImpl } = setup();
+      fetchImpl.mockImplementationOnce(failure);
+
+      const error = await client
+        .graphql('mutation { orderCreate }', {}, { idempotent: false })
+        .catch((e) => e);
+
+      expect(error.outcomeUnknown).toBe(true);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('still retries a non-idempotent mutation when throttled (Shopify did not run it)', async () => {
+    const throttled = jsonResponse(200, {
+      errors: [{ message: 'Throttled', extensions: { code: 'THROTTLED' } }],
+    });
+    const { client, fetchImpl } = setup(throttled, jsonResponse(200, { data: { ok: true } }));
+
+    await expect(
+      client.graphql('mutation { orderCreate }', {}, { idempotent: false }),
+    ).resolves.toEqual({ ok: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
   it('throws a readable error for GraphQL errors and a 401', async () => {
     const { client } = setup(
       jsonResponse(200, { errors: [{ message: 'Field "x" does not exist' }] }),

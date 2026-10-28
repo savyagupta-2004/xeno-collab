@@ -110,8 +110,15 @@ const createShopifyClient = ({
 }) => {
   const url = `https://${domain}/admin/api/${apiVersion}/graphql.json`;
 
-  // Runs a query/mutation and returns `data`. Retries rate limits and transient server errors.
-  const graphql = async (query, variables = {}) => {
+  // Runs a query/mutation and returns `data`. Rate limits are always retried: Shopify rejects
+  // throttled requests before running them. Network errors and 5xx are only retried when
+  // `idempotent` (queries, and mutations Shopify can deduplicate): otherwise the request may
+  // already have been applied, so the error is thrown with `outcomeUnknown` and the caller must
+  // check before trying again (a blind retry could create a duplicate order).
+  const graphql = async (query, variables = {}, { idempotent = true } = {}) => {
+    const unknownOutcome = (message, details) =>
+      Object.assign(new ShopifyError(message, details), { outcomeUnknown: true });
+
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
       let res;
       try {
@@ -121,6 +128,7 @@ const createShopifyClient = ({
           body: JSON.stringify({ query, variables }),
         });
       } catch (err) {
+        if (!idempotent) throw unknownOutcome(`Network error: ${err.message}`);
         if (attempt === MAX_ATTEMPTS) throw new ShopifyError(`Network error: ${err.message}`);
         await sleep(1000 * attempt);
         continue;
@@ -136,6 +144,7 @@ const createShopifyClient = ({
         continue;
       }
       if (res.status >= 500) {
+        if (!idempotent) throw unknownOutcome(`Shopify error HTTP ${res.status}`, body);
         if (attempt === MAX_ATTEMPTS)
           throw new ShopifyError(`Shopify error HTTP ${res.status}`, body);
         await sleep(1000 * attempt);

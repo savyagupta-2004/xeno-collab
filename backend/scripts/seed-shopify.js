@@ -59,16 +59,26 @@ const main = async () => {
   console.log(
     `  customers: ${summary.customers.created} created, ${summary.customers.existing} already there`,
   );
+  const { orders } = summary;
   console.log(
-    `  orders   : ${summary.orders.created} created (${summary.orders.cancelled} cancelled, ` +
-      `${summary.orders.refunded} refunded, ${summary.orders.guest} guest), ${summary.orders.existing} already there`,
+    `  orders   : ${orders.created} created, ${orders.existing} already there ` +
+      `(this run: ${orders.cancelled} cancelled, ${orders.refunded} refunded, ${orders.guest} guest)`,
   );
+  if (orders.repaired > 0) {
+    console.log(`  finished ${orders.repaired} refund/cancel(s) left over from an interrupted run`);
+  }
+  if (orders.duplicates > 0) {
+    console.log(
+      `  warning: ${orders.duplicates} duplicate seeded order(s) found and left untouched`,
+    );
+  }
   if (summary.totals.error) {
     console.log(`  (could not read totals: ${summary.totals.error})`);
   } else {
-    const { products, customers, orders } = summary.totals;
+    const totals = summary.totals;
     console.log(
-      `  seeded totals in the store: ${products} products, ${customers} customers, ${orders} orders`,
+      `  seeded totals in the store: ${totals.products} products, ${totals.customers} customers, ` +
+        `${totals.orders} orders`,
     );
   }
 };
