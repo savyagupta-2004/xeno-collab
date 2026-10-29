@@ -159,7 +159,7 @@ const createFakeShopify = ({ currencyCode = 'INR', cancelJob = 'succeed' } = {})
   // Fault injection: { op, when: 'lost-reply' (applied, reply lost) | 'no-reply' (not applied)
   // | 'crash' (plain error, like the script dying), times }
   const client = {
-    graphql: async (query, variables = {}, options = {}) => {
+    request: async (query, variables = {}, options = {}) => {
       const name = operationName(query);
       store.calls.push({ name, query, variables, options });
       const fault = store.faults.find((f) => f.op === name && f.times > 0);
