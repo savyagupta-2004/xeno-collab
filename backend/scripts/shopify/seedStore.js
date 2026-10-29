@@ -160,7 +160,7 @@ const createSafely = async ({ create, find, label, log, sleep }) => {
 
 const seedProducts = async ({ client, plan, log, sleep }) => {
   const fetchSeeded = async () => {
-    const { products } = await client.graphql(EXISTING_PRODUCTS, { query: seedQuery });
+    const { products } = await client.request(EXISTING_PRODUCTS, { query: seedQuery });
     return products.nodes;
   };
 
@@ -183,7 +183,7 @@ const seedProducts = async ({ client, plan, log, sleep }) => {
         sleep,
         find: async () => (await fetchSeeded()).find((p) => p.title === item.title),
         create: async () => {
-          const data = await client.graphql(
+          const data = await client.request(
             CREATE_PRODUCT,
             {
               input: {
@@ -219,14 +219,14 @@ const seedProducts = async ({ client, plan, log, sleep }) => {
 };
 
 const seedCustomers = async ({ client, plan, log, sleep }) => {
-  const { customers } = await client.graphql(EXISTING_CUSTOMERS, { query: seedQuery });
+  const { customers } = await client.request(EXISTING_CUSTOMERS, { query: seedQuery });
   // Emails can be null here if the app lacks protected customer data access; then a create
   // fails with "taken" and the customer is looked up by email instead.
   const byEmail = new Map(
     customers.nodes.filter((c) => c.email).map((c) => [c.email.toLowerCase(), c.id]),
   );
   const findByEmail = async (email) => {
-    const found = await client.graphql(FIND_CUSTOMER, { query: `email:"${email}"` });
+    const found = await client.request(FIND_CUSTOMER, { query: `email:"${email}"` });
     return found.customers.nodes[0]?.id;
   };
 
@@ -245,7 +245,7 @@ const seedCustomers = async ({ client, plan, log, sleep }) => {
           return found && { id: found, existed: true };
         },
         create: async () => {
-          const data = await client.graphql(
+          const data = await client.request(
             CREATE_CUSTOMER,
             {
               input: {
@@ -288,7 +288,7 @@ const fetchSeededOrders = async (client) => {
   const byKey = new Map();
   let cursor = null;
   do {
-    const { orders } = await client.graphql(EXISTING_ORDERS, {
+    const { orders } = await client.request(EXISTING_ORDERS, {
       query: seedQuery,
       first: ORDERS_PAGE_SIZE,
       cursor,
@@ -327,7 +327,7 @@ const createOrder = async ({ client, variables, sleep, log, label, key }) =>
     find: async () => (await fetchSeededOrders(client)).get(key)?.[0],
     create: async () => {
       for (let attempt = 1; ; attempt += 1) {
-        const data = await client.graphql(CREATE_ORDER, variables, { idempotent: false });
+        const data = await client.request(CREATE_ORDER, variables, { idempotent: false });
         const errors = data.orderCreate.userErrors;
         const rateLimited = errors.some((e) => /limit|too many|throttl/i.test(e.message));
         if (rateLimited && attempt < MAX_ORDER_ATTEMPTS) {
@@ -348,7 +348,7 @@ const refundOrder = async ({ client, order, domain, key }) => {
   if (!sale) throw new ShopifyError(`Order ${order.name} has no sale transaction to refund`);
 
   // Idempotent: the same key always refers to this one refund, so retries are safe.
-  const data = await client.graphql(REFUND_ORDER, {
+  const data = await client.request(REFUND_ORDER, {
     key: idempotencyKey(domain, key, 'refund'),
     input: {
       orderId: order.id,
@@ -373,7 +373,7 @@ const refundOrder = async ({ client, order, domain, key }) => {
 };
 
 const fetchCancelledAt = async (client, orderId) =>
-  (await client.graphql(ORDER_CANCELLED_AT, { id: orderId })).order?.cancelledAt ?? null;
+  (await client.request(ORDER_CANCELLED_AT, { id: orderId })).order?.cancelledAt ?? null;
 
 // Starts the cancellation and waits for Shopify's job to finish. Only returns once the order
 // is confirmed cancelled; otherwise throws (a re-run picks it up again).
@@ -382,7 +382,7 @@ const cancelOrder = async ({ client, order, sleep }) => {
 
   let jobResult = null;
   try {
-    const data = await client.graphql(CANCEL_ORDER, { orderId: order.id }, { idempotent: false });
+    const data = await client.request(CANCEL_ORDER, { orderId: order.id }, { idempotent: false });
     jobResult = assertNoUserErrors(data.orderCancel, `Cancelling ${order.name}`).jobResult;
   } catch (err) {
     // A lost reply (or "already cancelled") is settled by the order's own status below.
@@ -391,7 +391,7 @@ const cancelOrder = async ({ client, order, sleep }) => {
 
   for (const delay of CANCEL_POLL_DELAYS_MS) {
     if (jobResult?.id && !jobResult.done) {
-      const { node } = await client.graphql(CANCEL_JOB_STATUS, { id: jobResult.id });
+      const { node } = await client.request(CANCEL_JOB_STATUS, { id: jobResult.id });
       jobResult = { ...jobResult, ...node };
     }
     if (jobResult?.status === 'FAILED' || jobResult?.errors?.length) {
@@ -536,7 +536,7 @@ const seedOrders = async ({
 
 const countSeeded = async (client) => {
   try {
-    const data = await client.graphql(COUNTS, { query: seedQuery });
+    const data = await client.request(COUNTS, { query: seedQuery });
     return {
       products: data.productsCount.count,
       customers: data.customersCount.count,
@@ -555,7 +555,7 @@ const seedStore = async ({
   orderIntervalMs = ORDER_INTERVAL_MS,
   requiredCurrency = 'INR',
 }) => {
-  const { shop } = await client.graphql(SHOP_QUERY);
+  const { shop } = await client.request(SHOP_QUERY);
   log(`Store: ${shop.name} (${shop.myshopifyDomain}), currency ${shop.currencyCode}`);
 
   if (requiredCurrency && shop.currencyCode !== requiredCurrency) {
