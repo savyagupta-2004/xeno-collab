@@ -9,7 +9,8 @@
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env'), quiet: true });
 
-const { createShopifyClient, getAccessToken } = require('./shopify/client');
+const { createShopifyClient } = require('../src/services/shopify/client');
+const { getAccessToken } = require('./shopify/client');
 const { buildSeedPlan, describePlan } = require('./shopify/seedPlan');
 const { seedStore } = require('./shopify/seedStore');
 
@@ -40,11 +41,8 @@ const main = async () => {
 
   const { domain, accessToken, source } = await getAccessToken(process.env);
   console.log(`Using ${domain} (token from ${source})`);
-  const client = createShopifyClient({
-    domain,
-    accessToken,
-    apiVersion: process.env.SHOPIFY_API_VERSION || undefined,
-  });
+  // Same client the app uses for ingestion; API version from SHOPIFY_API_VERSION.
+  const client = createShopifyClient(domain, accessToken);
 
   const summary = await seedStore({
     client,
