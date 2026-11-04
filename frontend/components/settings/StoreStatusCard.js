@@ -1,3 +1,5 @@
+import FormAlert from '@/components/ui/FormAlert';
+
 const Row = ({ label, children }) => (
   <div className="flex justify-between gap-4 py-2 text-sm">
     <dt className="text-slate-500">{label}</dt>
@@ -6,7 +8,7 @@ const Row = ({ label, children }) => (
 );
 
 export default function StoreStatusCard({ store }) {
-  const { connected, shopDomain, lastSyncedAt, counts } = store;
+  const { connected, shopDomain, lastSyncedAt, sync, counts } = store;
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-6">
@@ -19,10 +21,16 @@ export default function StoreStatusCard({ store }) {
         <Row label="Last sync">
           {lastSyncedAt ? new Date(lastSyncedAt).toLocaleString('en-IN') : 'Never'}
         </Row>
+        {sync.running && <Row label="Sync">Running…</Row>}
         <Row label="Customers">{counts.customers}</Row>
         <Row label="Products">{counts.products}</Row>
         <Row label="Orders">{counts.orders}</Row>
       </dl>
+      {!sync.running && sync.lastError && (
+        <div className="mt-3">
+          <FormAlert>Last sync failed: {sync.lastError}</FormAlert>
+        </div>
+      )}
     </section>
   );
 }

@@ -87,6 +87,9 @@ export const SESSION_END_MESSAGES = {
   [SESSION_END_REASONS.inactive]: 'This store has been deactivated.',
 };
 
+// ---------- Store sync ----------
+export const SYNC_REFRESH_MS = 3000;
+
 // ---------- Validation (mirrors the backend rules) ----------
 export const VALIDATION = {
   passwordMinLength: 8,

@@ -5,10 +5,16 @@ jest.mock('../../src/config/prisma', () => ({
   checkDatabaseConnection: jest.fn(),
 }));
 
+// The sync itself is tested in fullSync.test.js.
+jest.mock('../../src/services/sync.service', () => ({
+  triggerFullSync: jest.fn(() => true),
+  isSyncing: jest.fn(() => false),
+}));
+
 const fake = require('../helpers/fakePrisma');
 const createApp = require('../../src/app');
 const { decryptToken } = require('../../src/utils/tokenCipher');
-const { fullSyncSteps } = require('../../src/services/sync.service');
+const { isSyncing, triggerFullSync } = require('../../src/services/sync.service');
 
 const app = createApp({ nodeEnv: 'test' });
 
@@ -47,7 +53,7 @@ let shopify;
 
 beforeEach(() => {
   fake.reset();
-  fullSyncSteps.length = 0;
+  triggerFullSync.mockClear();
   shopify = jest.fn(async () => validStore());
   jest.spyOn(global, 'fetch').mockImplementation((...args) => shopify(...args));
   jest.spyOn(console, 'warn').mockImplementation(() => {});
@@ -222,48 +228,26 @@ describe('POST /api/stores/connect', () => {
 describe('first full sync', () => {
   it('starts automatically, after the store is saved', async () => {
     const { token, tenantId } = await owner();
-    let domainDuringSync;
-    const step = jest.fn(async () => {
-      domainDuringSync = fake.db.tenants[0].shopDomain;
+    let domainAtStart;
+    triggerFullSync.mockImplementationOnce(() => {
+      domainAtStart = fake.db.tenants[0].shopDomain;
+      return true;
     });
-    fullSyncSteps.push(step);
 
     const res = await connect(token);
 
     expect(res.body.firstSyncStarted).toBe(true);
-    expect(step).toHaveBeenCalledWith(tenantId);
-    expect(domainDuringSync).toBe(DOMAIN);
-  });
-
-  it('does not fail the connect when the sync fails', async () => {
-    const { token } = await owner();
-    const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
-    fullSyncSteps.push(async () => {
-      throw new Error('sync broke');
-    });
-
-    const res = await connect(token);
-    await new Promise((resolve) => setImmediate(resolve));
-
-    expect(res.status).toBe(200);
-    expect(logged.mock.calls.flat().join(' ')).toContain('sync broke');
-  });
-
-  it('reports honestly that no sync ran while no sync step exists', async () => {
-    const { token } = await owner();
-
-    expect((await connect(token)).body.firstSyncStarted).toBe(false);
+    expect(triggerFullSync).toHaveBeenCalledWith(tenantId);
+    expect(domainAtStart).toBe(DOMAIN);
   });
 
   it('does not start when connecting fails', async () => {
     const { token } = await owner();
-    const step = jest.fn(async () => {});
-    fullSyncSteps.push(step);
     shopify.mockImplementation(async () => shopifyResponse(401, {}));
 
     await connect(token);
 
-    expect(step).not.toHaveBeenCalled();
+    expect(triggerFullSync).not.toHaveBeenCalled();
   });
 });
 
@@ -278,8 +262,19 @@ describe('GET /api/stores/status', () => {
       shopDomain: null,
       connected: false,
       lastSyncedAt: null,
+      sync: { running: false, lastError: null },
       counts: { customers: 0, products: 0, orders: 0 },
     });
+  });
+
+  it('reports a running sync and the reason the last one failed', async () => {
+    const { token, tenantId } = await owner();
+    isSyncing.mockReturnValueOnce(true);
+    fake.insert('syncLog', { tenantId, status: 'FAILED', errorMessage: 'Access denied' });
+
+    const res = await status(token);
+
+    expect(res.body.store.sync).toEqual({ running: true, lastError: 'Access denied' });
   });
 
   it('returns domain, connected flag, last sync and counts for the caller only', async () => {
@@ -300,6 +295,7 @@ describe('GET /api/stores/status', () => {
       shopDomain: DOMAIN,
       connected: true,
       lastSyncedAt: lastSyncedAt.toISOString(),
+      sync: { running: false, lastError: null },
       counts: { customers: 1, products: 1, orders: 0 },
     });
   });

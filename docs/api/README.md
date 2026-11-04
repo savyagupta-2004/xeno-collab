@@ -185,13 +185,15 @@ Calling it again with the same domain replaces the token.
     "shopDomain": "asha-apparel.myshopify.com",
     "connected": true,
     "lastSyncedAt": null,
+    "sync": { "running": true, "lastError": null },
     "counts": { "customers": 0, "products": 0, "orders": 0 }
   },
-  "firstSyncStarted": false
+  "firstSyncStarted": true
 }
 ```
 
-`firstSyncStarted` is `false` while no sync steps exist yet.
+The sync imports customers, products and orders. Follow its progress with `GET /api/stores/status`:
+`sync.running` is `true` until it ends, and `sync.lastError` holds the reason if it failed.
 
 Errors: `400 VALIDATION_ERROR`, `401 UNAUTHORIZED`, `401 TOKEN_EXPIRED`, `403 TENANT_INACTIVE`,
 `409 STORE_TAKEN`, `409 STORE_CONNECTED`, `422 SHOPIFY_AUTH_FAILED`, `422 MISSING_SCOPES`,

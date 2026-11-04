@@ -5,7 +5,7 @@ import ConnectStoreForm from '@/components/settings/ConnectStoreForm';
 import StoreStatusCard from '@/components/settings/StoreStatusCard';
 import FormAlert from '@/components/ui/FormAlert';
 import { api } from '@/lib/api';
-import { API_ENDPOINTS } from '@/lib/constants';
+import { API_ENDPOINTS, SYNC_REFRESH_MS } from '@/lib/constants';
 
 export default function StoreSettings() {
   const [store, setStore] = useState(null);
@@ -23,6 +23,19 @@ export default function StoreSettings() {
       cancelled = true;
     };
   }, []);
+
+  // Refresh the card while a sync runs, so the counts climb and the result appears by itself.
+  const syncing = Boolean(store?.sync.running);
+  useEffect(() => {
+    if (!syncing) return undefined;
+    const timer = setInterval(() => {
+      api
+        .get(API_ENDPOINTS.storeStatus)
+        .then((data) => setStore(data.store))
+        .catch(() => {}); // a missed refresh is fine, the next one tries again
+    }, SYNC_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [syncing]);
 
   const onConnected = ({ store: connected, firstSyncStarted }) => {
     setStore(connected);

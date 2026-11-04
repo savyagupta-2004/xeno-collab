@@ -2,7 +2,7 @@ const AppError = require('../utils/AppError');
 const { encryptToken } = require('../utils/tokenCipher');
 const { getTokenEncryptionKey } = require('../config/shopify');
 const { createShopifyClient, ERROR_CODES } = require('./shopify/client');
-const { triggerFullSync } = require('./sync.service');
+const { isSyncing, triggerFullSync } = require('./sync.service');
 const { forTenant } = require('./tenantDb');
 
 const VALIDATE_STORE_QUERY = `query ValidateStore {
@@ -70,10 +70,14 @@ const isShopDomainConflict = (err) =>
 
 const getStoreStatus = async (tenantId) => {
   const db = forTenant(tenantId);
-  const [tenant, customers, products, orders] = await Promise.all([
+  const [tenant, latestLog, customers, products, orders] = await Promise.all([
     db.tenant.findUnique({
       where: { id: tenantId },
       select: { shopDomain: true, shopifyAccessToken: true, lastSyncedAt: true },
+    }),
+    db.syncLog.findFirst({
+      orderBy: { startedAt: 'desc' },
+      select: { status: true, errorMessage: true },
     }),
     db.customer.count(),
     db.product.count(),
@@ -84,6 +88,10 @@ const getStoreStatus = async (tenantId) => {
     shopDomain: tenant.shopDomain,
     connected: Boolean(tenant.shopDomain && tenant.shopifyAccessToken),
     lastSyncedAt: tenant.lastSyncedAt,
+    sync: {
+      running: isSyncing(tenantId),
+      lastError: latestLog?.status === 'FAILED' ? latestLog.errorMessage : null,
+    },
     counts: { customers, products, orders },
   };
 };
