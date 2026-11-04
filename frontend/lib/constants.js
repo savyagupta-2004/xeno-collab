@@ -54,6 +54,8 @@ export const API_ENDPOINTS = {
   login: '/auth/login',
   register: '/auth/register',
   me: '/auth/me',
+  storeStatus: '/stores/status',
+  storeConnect: '/stores/connect',
 };
 
 // Same-origin route handlers in app/api/
@@ -84,6 +86,9 @@ export const SESSION_END_MESSAGES = {
   [SESSION_END_REASONS.expired]: 'Your session has expired. Please log in again.',
   [SESSION_END_REASONS.inactive]: 'This store has been deactivated.',
 };
+
+// ---------- Store sync ----------
+export const SYNC_REFRESH_MS = 3000;
 
 // ---------- Validation (mirrors the backend rules) ----------
 export const VALIDATION = {

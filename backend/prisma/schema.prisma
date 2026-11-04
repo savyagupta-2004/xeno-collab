@@ -27,6 +27,7 @@ model Tenant {
   name               String
   /// e.g. "my-store.myshopify.com". Null until the store is connected.
   shopDomain         String?   @unique @map("shop_domain")
+  /// AES-256-GCM ciphertext (see src/utils/tokenCipher.js). Never returned by any API.
   shopifyAccessToken String?   @map("shopify_access_token")
   isActive           Boolean   @default(true) @map("is_active")
   lastSyncedAt       DateTime? @map("last_synced_at") @db.Timestamptz(3)

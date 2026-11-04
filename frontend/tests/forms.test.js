@@ -6,6 +6,7 @@ import { renderToString } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import LoginForm from '@/components/auth/LoginForm';
 import RegisterForm from '@/components/auth/RegisterForm';
+import ConnectStoreForm from '@/components/settings/ConnectStoreForm';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ replace: vi.fn(), refresh: vi.fn() }),
@@ -14,6 +15,7 @@ vi.mock('next/navigation', () => ({
 describe.each([
   ['LoginForm', LoginForm],
   ['RegisterForm', RegisterForm],
+  ['ConnectStoreForm', ConnectStoreForm],
 ])('%s before hydration', (_name, Form) => {
   const html = renderToString(createElement(Form));
 

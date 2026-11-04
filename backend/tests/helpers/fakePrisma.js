@@ -36,6 +36,19 @@ const MODELS = {
   product: { name: 'Product', table: 'products', unique: [], defaults: serial },
   order: { name: 'Order', table: 'orders', unique: [], defaults: serial },
   orderLineItem: { name: 'OrderLineItem', table: 'orderLineItems', unique: [], defaults: serial },
+  syncLog: {
+    name: 'SyncLog',
+    table: 'syncLogs',
+    unique: [],
+    defaults: () => ({
+      ...serial(),
+      status: 'RUNNING',
+      recordsSynced: 0,
+      errorMessage: null,
+      startedAt: new Date(),
+      finishedAt: null,
+    }),
+  },
 };
 
 // model -> relation field -> how to resolve it
@@ -60,6 +73,8 @@ const matches = (row, where = {}) =>
   Object.entries(where).every(([key, value]) => {
     if (key === 'AND') return [].concat(value).every((w) => matches(row, w));
     if (key === 'OR') return [].concat(value).some((w) => matches(row, w));
+    // Compound unique key, e.g. tenantId_shopifyOrderId: { tenantId, shopifyOrderId }
+    if (key.includes('_')) return matches(row, value);
     return row[key] === value;
   });
 
@@ -141,6 +156,27 @@ const delegate = (modelKey) => {
       sortBy(rows(), orderBy)
         .filter((r) => matches(r, where))
         .map((r) => shape(modelKey, r, { select, include })),
+    update: async ({ where, data, select, include }) => {
+      const row = rows().find((r) => matches(r, where));
+      if (!row) throw Object.assign(new Error('Record not found'), { code: 'P2025' });
+      for (const [field, column] of unique) {
+        const clash =
+          data[field] != null && rows().some((r) => r !== row && r[field] === data[field]);
+        if (clash) throw uniqueViolation(name, column);
+      }
+      Object.assign(row, data);
+      return shape(modelKey, row, { select, include });
+    },
+    upsert: async ({ where, create, update, select, include }) => {
+      const row = rows().find((r) => matches(r, where));
+      if (row) Object.assign(row, update);
+      else rows().push({ ...defaults(), ...create });
+      return shape(
+        modelKey,
+        rows().find((r) => matches(r, where)),
+        { select, include },
+      );
+    },
     count: async ({ where } = {}) => rows().filter((r) => matches(r, where)).length,
   };
 };

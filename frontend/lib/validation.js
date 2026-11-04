@@ -3,6 +3,7 @@
 import { VALIDATION } from '@/lib/constants';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const SHOP_DOMAIN = /^[a-z0-9][a-z0-9-]*(\.myshopify\.com)?$/;
 
 const requiredText = (value, label) => {
   const text = (value ?? '').trim();
@@ -47,6 +48,23 @@ export const validateRegister = ({ name, email, password, storeName }) =>
     email: emailError(email),
     password: newPasswordError(password),
     storeName: requiredText(storeName, 'Store name'),
+  });
+
+const shopDomainError = (value) => {
+  const host = (value ?? '')
+    .trim()
+    .replace(/^https?:\/\//i, '')
+    .replace(/[/?#].*$/, '')
+    .toLowerCase();
+  if (!host) return 'Shop domain is required';
+  if (!SHOP_DOMAIN.test(host)) return 'Enter a valid myshopify.com domain';
+  return null;
+};
+
+export const validateConnectStore = ({ shopDomain, accessToken }) =>
+  compact({
+    shopDomain: shopDomainError(shopDomain),
+    accessToken: (accessToken ?? '').trim() ? null : 'Access token is required',
   });
 
 // Turns an API error into what the form shows: messages next to fields, or one message on top.
