@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { toFormErrors, validateLogin, validateRegister } from '@/lib/validation';
+import {
+  toFormErrors,
+  validateConnectStore,
+  validateLogin,
+  validateRegister,
+} from '@/lib/validation';
 
 const validRegistration = {
   name: 'Asha Rao',
@@ -70,5 +75,27 @@ describe('toFormErrors', () => {
       message: 'Invalid email or password',
     });
     expect(toFormErrors(undefined).message).toMatch(/something went wrong/i);
+  });
+});
+
+describe('validateConnectStore', () => {
+  it.each(['my-store', 'my-store.myshopify.com', 'https://My-Store.myshopify.com/admin'])(
+    'accepts %s',
+    (shopDomain) => {
+      expect(validateConnectStore({ shopDomain, accessToken: 'shpat_x' })).toEqual({});
+    },
+  );
+
+  it('requires both fields', () => {
+    expect(validateConnectStore({ shopDomain: ' ', accessToken: ' ' })).toEqual({
+      shopDomain: 'Shop domain is required',
+      accessToken: 'Access token is required',
+    });
+  });
+
+  it('rejects a domain outside myshopify.com', () => {
+    expect(validateConnectStore({ shopDomain: 'evil.com', accessToken: 'x' })).toEqual({
+      shopDomain: 'Enter a valid myshopify.com domain',
+    });
   });
 });

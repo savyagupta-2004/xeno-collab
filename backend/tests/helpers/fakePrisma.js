@@ -141,6 +141,17 @@ const delegate = (modelKey) => {
       sortBy(rows(), orderBy)
         .filter((r) => matches(r, where))
         .map((r) => shape(modelKey, r, { select, include })),
+    update: async ({ where, data, select, include }) => {
+      const row = rows().find((r) => matches(r, where));
+      if (!row) throw Object.assign(new Error('Record not found'), { code: 'P2025' });
+      for (const [field, column] of unique) {
+        const clash =
+          data[field] != null && rows().some((r) => r !== row && r[field] === data[field]);
+        if (clash) throw uniqueViolation(name, column);
+      }
+      Object.assign(row, data);
+      return shape(modelKey, row, { select, include });
+    },
     count: async ({ where } = {}) => rows().filter((r) => matches(r, where)).length,
   };
 };

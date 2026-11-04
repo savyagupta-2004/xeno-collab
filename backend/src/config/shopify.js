@@ -18,4 +18,14 @@ const getShopifyApiVersion = () => {
   return version;
 };
 
-module.exports = { DEFAULT_SHOPIFY_API_VERSION, getShopifyApiVersion };
+// 32 random bytes, base64 encoded. Checked on use rather than at startup: only connecting or
+// syncing a store needs it, not the rest of the API.
+const getTokenEncryptionKey = () => {
+  const key = Buffer.from(process.env.SHOPIFY_TOKEN_ENCRYPTION_KEY || '', 'base64');
+  if (key.length !== 32) {
+    throw new Error('SHOPIFY_TOKEN_ENCRYPTION_KEY must be 32 bytes, base64 encoded');
+  }
+  return key;
+};
+
+module.exports = { DEFAULT_SHOPIFY_API_VERSION, getShopifyApiVersion, getTokenEncryptionKey };

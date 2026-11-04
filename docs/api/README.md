@@ -35,6 +35,11 @@ Every error response has this shape:
 | 403    | `TENANT_INACTIVE`     | The store has been deactivated                               |
 | 404    | `NOT_FOUND`           | Route or record not found (incl. another tenant's record)    |
 | 409    | `EMAIL_TAKEN`         | An account with this email already exists                    |
+| 409    | `STORE_TAKEN`         | The Shopify store is connected to another account            |
+| 409    | `STORE_CONNECTED`     | This account is already connected to a different store       |
+| 422    | `SHOPIFY_AUTH_FAILED` | Shopify rejected the domain or token (see `fields`)          |
+| 422    | `MISSING_SCOPES`      | The token lacks a scope ingestion needs                      |
+| 424    | `SHOPIFY_UNAVAILABLE` | Shopify could not be reached; try again                      |
 | 500    | `INTERNAL_ERROR`      | Unexpected server error (details are logged, never returned) |
 
 Validation errors also include `fields`, one message per invalid field:
@@ -159,3 +164,42 @@ Errors for all three: `401 UNAUTHORIZED`, `401 TOKEN_EXPIRED`, `403 TENANT_INACT
 Includes the order's line items.
 
 **200**: `{ "order": { "id": 2, "shopifyOrderId": "…", "totalPrice": "…", "lineItems": [ … ], … } }`
+
+## Stores
+
+All require a token. Access tokens are encrypted at rest (AES-256-GCM) and never returned.
+
+### `POST /api/stores/connect`
+
+Checks the credentials with a live Shopify call, including the `read_customers`, `read_products`
+and `read_orders` scopes, then saves the store and starts the first full sync in the background.
+Calling it again with the same domain replaces the token.
+
+**Body**: `{ "shopDomain": "asha-apparel.myshopify.com", "accessToken": "<admin api token>" }`
+
+**200**
+
+```json
+{
+  "store": {
+    "shopDomain": "asha-apparel.myshopify.com",
+    "connected": true,
+    "lastSyncedAt": null,
+    "counts": { "customers": 0, "products": 0, "orders": 0 }
+  },
+  "firstSyncStarted": false
+}
+```
+
+`firstSyncStarted` is `false` while no sync steps exist yet.
+
+Errors: `400 VALIDATION_ERROR`, `401 UNAUTHORIZED`, `401 TOKEN_EXPIRED`, `403 TENANT_INACTIVE`,
+`409 STORE_TAKEN`, `409 STORE_CONNECTED`, `422 SHOPIFY_AUTH_FAILED`, `422 MISSING_SCOPES`,
+`424 SHOPIFY_UNAVAILABLE`.
+
+### `GET /api/stores/status`
+
+**200**: `{ "store": { … } }` (same shape as above). `shopDomain` is `null` and `connected` is
+`false` until a store is connected.
+
+Errors: `401 UNAUTHORIZED`, `401 TOKEN_EXPIRED`, `403 TENANT_INACTIVE`.

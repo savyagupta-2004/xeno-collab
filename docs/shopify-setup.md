@@ -142,6 +142,19 @@ by tag `xeno-seed`). There are cancelled and refunded orders, a few orders witho
 - `backend/.env` is git-ignored; only `backend/.env.example` (with empty values) is committed.
 - If a secret leaks, rotate it in the Dev Dashboard (**App settings → Credentials**).
 
+## 7. Connect a store to the platform
+
+`backend/.env` needs `SHOPIFY_TOKEN_ENCRYPTION_KEY`, which encrypts stored tokens. Generate it once:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+Changing the key makes stored tokens unreadable, so reconnect stores if it changes.
+
+Then get a token with the **Xeno Insights** credentials (`npm run shopify:token`) and enter the
+shop domain and token under **Settings** in the dashboard.
+
 ## Notes for the ingestion stories
 
 - Tokens from the client credentials grant **expire after 24 hours**, so the backend must request

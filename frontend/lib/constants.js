@@ -54,6 +54,8 @@ export const API_ENDPOINTS = {
   login: '/auth/login',
   register: '/auth/register',
   me: '/auth/me',
+  storeStatus: '/stores/status',
+  storeConnect: '/stores/connect',
 };
 
 // Same-origin route handlers in app/api/
